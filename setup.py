@@ -14,7 +14,7 @@ setup(
     name="embeddings_squeeze",
     version="0.1.0",
     author="Your Name",
-    author_email="your.email@example.com",
+    # author_email="your.email@example.com",
     description="Vector Quantization for Segmentation Model Compression",
     long_description=long_description,
     long_description_content_type="text/markdown",
