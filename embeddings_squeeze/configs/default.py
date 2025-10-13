@@ -74,7 +74,7 @@ class ExperimentConfig:
     seed: int = 42
     
     # Initialization
-    initialize_codebook: bool = True
+    initialize_codebook: bool = False
     max_init_samples: int = 50000
 
 
@@ -131,5 +131,10 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
         config.experiment_name = args["experiment_name"]
     if "seed" in args:
         config.seed = args["seed"]
+    if "initialize_codebook" in args:
+        # argparse provides this key with a boolean even if the flag is not passed
+        config.initialize_codebook = args["initialize_codebook"]
+    if "max_init_samples" in args and args["max_init_samples"] is not None:
+        config.max_init_samples = args["max_init_samples"]
     
     return config

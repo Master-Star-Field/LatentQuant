@@ -189,8 +189,9 @@ def main():
         callbacks=callbacks,
         log_every_n_steps=config.training.log_every_n_steps,
         val_check_interval=config.training.val_check_interval,
-        accelerator="auto",
-        devices="auto",
+        accelerator="gpu", devices=1,
+        num_sanity_val_steps=0,
+        profiler="simple",
         precision=16 if torch.cuda.is_available() else 32,
     )
     

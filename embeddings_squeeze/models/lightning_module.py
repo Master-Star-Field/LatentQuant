@@ -35,6 +35,8 @@ class VQSqueezeModule(pl.LightningModule):
         self.backbone = backbone
         self.learning_rate = learning_rate
         self.vq_loss_weight = vq_loss_weight
+        # Detect if the backbone is frozen (no trainable params)
+        self._backbone_frozen = not any(p.requires_grad for p in self.backbone.parameters())
         
         # Initialize VQ with backbone's feature dimension
         self.vq = VectorQuantizer(
@@ -58,8 +60,8 @@ class VQSqueezeModule(pl.LightningModule):
             output: Segmentation logits [B, num_classes, H, W]
             vq_loss: VQ loss
         """
-        # Extract features
-        features = self.backbone.extract_features(images, detach=False)
+        # Extract features; detach if backbone is frozen to avoid grad overhead
+        features = self.backbone.extract_features(images, detach=self._backbone_frozen)
         
         # Quantize features
         B, C, H, W = features.shape
@@ -119,8 +121,14 @@ class VQSqueezeModule(pl.LightningModule):
 
     def configure_optimizers(self):
         """Configure optimizer."""
-        params = list(self.backbone.parameters()) + list(self.vq.parameters())
+        # Optimize only trainable params
+        params = [p for p in self.parameters() if p.requires_grad]
         return torch.optim.Adam(params, lr=self.learning_rate)
+
+    def on_train_start(self):
+        """Ensure frozen backbone stays in eval mode during training (e.g., BN/Dropout)."""
+        if self._backbone_frozen:
+            self.backbone.eval()
 
     def predict_with_vq(self, images):
         """
