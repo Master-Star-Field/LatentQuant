@@ -66,7 +66,7 @@ class DeepLabV3SegmentationBackbone(SegmentationBackbone):
         features = self.backbone(images)['out']
         output = self.classifier(features)
         output = F.interpolate(output, size=images.shape[-2:], mode='bilinear')
-        return output
+        return {'out': output}
 
     @property
     def feature_dim(self):
