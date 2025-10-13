@@ -112,6 +112,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--vq_loss_weight", type=float, default=0.1,
                        help="VQ loss weight")
+    parser.add_argument("--max_batches", type=int, default=None,
+                       help="Limit number of batches per epoch for train/val/test")
     
     # Data arguments
     parser.add_argument("--dataset", type=str, default="oxford_pet",
@@ -162,7 +164,7 @@ def main():
         learning_rate=config.training.learning_rate,
         vq_loss_weight=config.training.vq_loss_weight
     )
-    
+
     # Setup data
     data_module.setup('fit')
     
@@ -172,7 +174,7 @@ def main():
         initialize_codebook_from_data(
             model.vq, 
             backbone, 
-            data_module.train_dataloader(), 
+            data_module.train_dataloader(max_batches=config.training.max_batches), 
             model.device,
             max_samples=config.max_init_samples
         )
@@ -197,18 +199,21 @@ def main():
     trainer.fit(model, data_module)
     
     # Test compression
-    print("Measuring compression...")
-    data_module.setup('test')
-    compression_ratio = measure_compression(
-        model.vq,
-        backbone, 
-        data_module.test_dataloader(),
-        model.device
-    )
+    # print("Measuring compression...")
+    # data_module.setup('test')
+    # compression_ratio = measure_compression(
+    #     model.vq,
+    #     backbone, 
+    #     data_module.test_dataloader(max_batches=config.training.max_batches),
+    #     model.device
+    # )
+    # print(f"Training completed!")
+    # print(f"Compression ratio: {compression_ratio:.1f}x")
+    # print(f"Results saved to: {config.output_dir}/{config.experiment_name}")
     
-    print(f"Training completed!")
-    print(f"Compression ratio: {compression_ratio:.1f}x")
-    print(f"Results saved to: {config.output_dir}/{config.experiment_name}")
+    # print(f"Training completed!")
+    # print(f"Compression ratio: {compression_ratio:.1f}x")
+    # print(f"Results saved to: {config.output_dir}/{config.experiment_name}")
 
 
 if __name__ == "__main__":

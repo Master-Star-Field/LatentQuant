@@ -39,16 +39,16 @@ class BaseDataModule(pl.LightningDataModule, ABC):
         pass
     
     @abstractmethod
-    def train_dataloader(self):
+    def train_dataloader(self, max_batches: int = None):
         """Return training dataloader."""
         pass
     
     @abstractmethod
-    def val_dataloader(self):
+    def val_dataloader(self, max_batches: int = None):
         """Return validation dataloader."""
         pass
     
     @abstractmethod
-    def test_dataloader(self):
+    def test_dataloader(self, max_batches: int = None):
         """Return test dataloader."""
         pass

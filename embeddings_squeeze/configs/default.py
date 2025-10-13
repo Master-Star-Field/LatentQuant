@@ -28,6 +28,7 @@ class TrainingConfig:
     """Training configuration."""
     epochs: int = 10
     batch_size: int = 4
+    max_batches: int = None
     learning_rate: float = 1e-4
     vq_loss_weight: float = 0.1
     num_workers: int = 0
@@ -108,6 +109,8 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
         config.training.epochs = args["epochs"]
     if "batch_size" in args:
         config.training.batch_size = args["batch_size"]
+    if "max_batches" in args:
+        config.training.max_batches = args["max_batches"]
     if "lr" in args:
         config.training.learning_rate = args["lr"]
     if "vq_loss_weight" in args:

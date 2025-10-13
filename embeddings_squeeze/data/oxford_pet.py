@@ -117,32 +117,35 @@ class OxfordPetDataModule(BaseDataModule):
             
             self.test_dataset = wrapped_dataset
 
-    def train_dataloader(self):
+    def train_dataloader(self, max_batches: int = None):
         """Return training dataloader."""
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=self.pin_memory
+            pin_memory=self.pin_memory,
+            drop_last=max_batches is not None
         )
 
-    def val_dataloader(self):
+    def val_dataloader(self, max_batches: int = None):
         """Return validation dataloader."""
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=self.pin_memory
+            pin_memory=self.pin_memory,
+            drop_last=max_batches is not None
         )
 
-    def test_dataloader(self):
+    def test_dataloader(self, max_batches: int = None):
         """Return test dataloader."""
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=self.pin_memory
+            pin_memory=self.pin_memory,
+            drop_last=max_batches is not None
         )
