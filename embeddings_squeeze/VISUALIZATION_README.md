@@ -1,6 +1,6 @@
 # VQ Visualization System
 
-This document explains how to use the new VQ visualization system to compare segmentation results with and without Vector Quantization.
+This document explains how to use the VQ visualization system to compare segmentation results with and without Vector Quantization.
 
 ## Overview
 
@@ -10,11 +10,24 @@ The visualization system consists of three main components:
 2. **VQ Training Script** (`squeeze.py`) - Trains segmentation models with VQ (existing)
 3. **Visualization Script** (`visualize.py`) - Compares and visualizes results
 
+## Training Approach
+
+Both baseline and VQ models use the same training strategy:
+
+- **Backbone**: Pre-trained weights (ViT-B/32 or DeepLabV3-ResNet50) remain **frozen**
+- **Segmentation Head**: Only the final classification layer is trained
+- **Purpose**: This ensures fair comparison between VQ and baseline, as both use identical frozen backbones
+
+This approach is ideal for:
+- Quick training (only small segmentation head)
+- Fair comparison (same backbone features)
+- Resource efficiency (minimal trainable parameters)
+
 ## Quick Start
 
 ### 1. Train Baseline Model
 
-First, train a baseline segmentation model without VQ:
+First, train a baseline segmentation model without VQ. **Note: Only the segmentation head is trained while the backbone remains frozen.**
 
 ```bash
 cd embeddings_squeeze
@@ -142,14 +155,13 @@ Each figure contains rows with 4 columns:
 Run the integration test to verify everything works:
 
 ```bash
-python test_integration.py
+python test_simplified_baseline.py
 ```
 
 This will test:
-- Model creation
-- Data loading (if dataset is available)
+- Backbone classifier training
+- Optimizer creation
 - Model inference
-- Visualization utilities
 
 ## File Structure
 
@@ -158,9 +170,8 @@ embeddings_squeeze/
 ├── train_baseline.py          # Baseline training script
 ├── squeeze.py                 # VQ training script (existing)
 ├── visualize.py               # Visualization script
-├── test_integration.py       # Integration test
+├── test_simplified_baseline.py # Integration test
 ├── models/
-│   ├── baseline_module.py    # Baseline Lightning module
 │   ├── lightning_module.py    # VQ Lightning module (existing)
 │   └── ...
 ├── utils/
@@ -168,6 +179,23 @@ embeddings_squeeze/
 │   └── ...
 └── ...
 ```
+
+## Key Implementation Details
+
+### Simplified Baseline Training
+
+The baseline training uses a much simpler approach:
+
+1. **Direct Backbone Usage**: Uses `ViTSegmentationBackbone` or `DeepLabV3SegmentationBackbone` directly
+2. **Automatic Classifier Training**: The backbone's classifier is automatically trainable when `freeze_backbone=True`
+3. **Minimal Wrapper**: `BaselineSegmentationModule` is just a thin Lightning wrapper around the backbone
+4. **Same Interface**: Compatible with existing visualization and comparison utilities
+
+### Backbone Architecture
+
+- **ViT**: `_ViTSegmentationHead` (trainable) + frozen ViT encoder
+- **DeepLab**: `model.classifier` (trainable) + frozen ResNet backbone
+- **Both**: Return `{'out': logits}` for consistent interface
 
 ## Troubleshooting
 

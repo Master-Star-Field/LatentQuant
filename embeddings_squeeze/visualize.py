@@ -14,7 +14,7 @@ from pathlib import Path
 
 from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone
 from models.lightning_module import VQSqueezeModule
-from models.baseline_module import BaselineSegmentationModule
+from train_baseline import BaselineSegmentationModule
 from data import OxfordPetDataModule
 from utils.comparison import prepare_visualization_data, visualize_comparison
 from configs.default import get_default_config, update_config_from_args

@@ -2,6 +2,9 @@
 """
 CLI script for baseline segmentation training without VQ.
 
+This script directly uses the existing backbone's trainable classifier head
+while keeping the backbone frozen.
+
 Usage:
     python train_baseline.py --model vit --dataset oxford_pet --epochs 3
 """
@@ -15,9 +18,125 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone
-from models.baseline_module import BaselineSegmentationModule
 from data import OxfordPetDataModule
 from configs.default import get_default_config, update_config_from_args
+
+
+class BaselineSegmentationModule(pl.LightningModule):
+    """
+    Simple Lightning module that wraps existing backbone directly.
+    
+    The backbone already has a trainable classifier when freeze_backbone=True.
+    """
+    
+    def __init__(
+        self,
+        backbone,
+        learning_rate: float = 1e-4,
+        **kwargs
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        
+        self.backbone = backbone
+        self.learning_rate = learning_rate
+        
+        # Segmentation loss
+        self.seg_criterion = torch.nn.CrossEntropyLoss(ignore_index=255)
+        
+        # Verify backbone setup
+        self._verify_backbone_setup()
+
+    def _verify_backbone_setup(self):
+        """Verify that backbone is properly configured."""
+        total_params = sum(p.numel() for p in self.backbone.parameters())
+        trainable_params = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
+        frozen_params = total_params - trainable_params
+        
+        print(f"Backbone parameter summary:")
+        print(f"  Total parameters: {total_params:,}")
+        print(f"  Trainable parameters: {trainable_params:,}")
+        print(f"  Frozen parameters: {frozen_params:,}")
+        print(f"  Freeze ratio: {frozen_params/total_params*100:.1f}%")
+        
+        if trainable_params == 0:
+            raise ValueError("No trainable parameters found! Check backbone configuration.")
+
+    def forward(self, images):
+        """Forward pass through backbone (backbone + classifier)."""
+        return self.backbone(images)
+
+    def training_step(self, batch, batch_idx):
+        """Training step."""
+        images, masks = batch
+        masks = masks.squeeze(1).long()
+        
+        # Forward pass through backbone (frozen backbone + trainable classifier)
+        output = self(images)
+        
+        # Extract logits from dict if needed
+        if isinstance(output, dict):
+            logits = output['out']
+        else:
+            logits = output
+        
+        # Compute loss
+        seg_loss = self.seg_criterion(logits, masks)
+        
+        # Log metrics
+        self.log('train/seg_loss', seg_loss, on_step=True, on_epoch=True, prog_bar=True)
+        
+        return seg_loss
+
+    def validation_step(self, batch, batch_idx):
+        """Validation step."""
+        images, masks = batch
+        masks = masks.squeeze(1).long()
+        
+        # Forward pass
+        output = self(images)
+        
+        # Extract logits from dict if needed
+        if isinstance(output, dict):
+            logits = output['out']
+        else:
+            logits = output
+        
+        # Compute loss
+        seg_loss = self.seg_criterion(logits, masks)
+        
+        # Compute IoU (simplified pixel accuracy)
+        preds = logits.argmax(dim=1)
+        valid = masks != 255
+        pixel_acc = (preds[valid] == masks[valid]).float().mean()
+        
+        # Log metrics
+        self.log('val/seg_loss', seg_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val/pixel_acc', pixel_acc, on_step=False, on_epoch=True, prog_bar=True)
+        
+        return seg_loss
+
+    def configure_optimizers(self):
+        """Configure optimizer - only trainable parameters."""
+        # Only optimize trainable params (classifier)
+        params = [p for p in self.parameters() if p.requires_grad]
+        
+        print(f"Optimizing {len(params)} parameter groups")
+        print(f"Total trainable parameters: {sum(p.numel() for p in params):,}")
+        
+        return torch.optim.Adam(params, lr=self.learning_rate)
+
+    def predict(self, images):
+        """Predict segmentation masks."""
+        self.eval()
+        with torch.no_grad():
+            output = self(images)
+            if isinstance(output, dict):
+                logits = output['out']
+            else:
+                logits = output
+            predictions = logits.argmax(dim=1)
+        return predictions
 
 
 def create_backbone(config):
@@ -25,13 +144,13 @@ def create_backbone(config):
     if config.model.backbone.lower() == "vit":
         backbone = ViTSegmentationBackbone(
             num_classes=config.model.num_classes,
-            freeze_backbone=config.model.freeze_backbone
+            freeze_backbone=True  # Always freeze backbone, train only classifier
         )
     elif config.model.backbone.lower() == "deeplab":
         backbone = DeepLabV3SegmentationBackbone(
             weights_name=config.model.deeplab_weights,
             num_classes=config.model.num_classes,
-            freeze_backbone=config.model.freeze_backbone
+            freeze_backbone=True  # Always freeze backbone, train only classifier
         )
     else:
         raise ValueError(f"Unknown backbone: {config.model.backbone}")
@@ -138,6 +257,7 @@ def main():
     print(f"Model: {config.model.backbone}")
     print(f"Dataset: {config.data.dataset}")
     print(f"Epochs: {config.training.epochs}")
+    print("Training strategy: Frozen backbone + trainable classifier")
     
     # Create components
     backbone = create_backbone(config)
