@@ -28,18 +28,8 @@ class DeepLabV3SegmentationBackbone(SegmentationBackbone):
         weights = getattr(DeepLabV3_ResNet50_Weights, weights_name)
         model = deeplabv3_resnet50(weights=weights)
         
-        # Split classifier into feature extractor (ASPP) and final conv
-        # Original classifier structure: [0]=ASPP, [1]=Conv, [2]=BN, [3]=ReLU, [4]=Final Conv
-        classifier_modules = list(model.classifier.children())
-        
-        # Backbone now includes: ResNet + ASPP + intermediate convs (all frozen)
-        self.backbone = nn.ModuleDict({
-            'resnet': model.backbone,
-            'aspp_and_convs': nn.Sequential(*classifier_modules[:-1])  # Everything except last layer
-        })
-        
-        # Classifier is only the final 1x1 convolution (trainable)
-        self.classifier = classifier_modules[-1]  # Final Conv2d layer
+        self.backbone = model.backbone
+        self.classifier = model.classifier
         
         self._num_classes = num_classes
         
@@ -50,20 +40,17 @@ class DeepLabV3SegmentationBackbone(SegmentationBackbone):
 
     def extract_features(self, images, detach=True):
         """
-        Extract DeepLabV3 backbone features (ResNet + ASPP).
+        Extract DeepLabV3 backbone features.
         
         Args:
             images: Input images [B, C, H, W]
             detach: Whether to detach gradients from backbone
             
         Returns:
-            features: Feature maps after ASPP [B, 256, H/8, W/8]
+            features: Feature maps [B, 2048, H/8, W/8]
         """
         with torch.set_grad_enabled(not detach):
-            # Pass through ResNet backbone
-            resnet_features = self.backbone['resnet'](images)['out']
-            # Pass through ASPP and intermediate convs
-            features = self.backbone['aspp_and_convs'](resnet_features)
+            features = self.backbone(images)['out']
         return features
 
     def forward(self, images):
@@ -76,19 +63,15 @@ class DeepLabV3SegmentationBackbone(SegmentationBackbone):
         Returns:
             output: Segmentation logits [B, num_classes, H, W]
         """
-        # Pass through ResNet + ASPP (frozen backbone)
-        resnet_features = self.backbone['resnet'](images)['out']
-        features = self.backbone['aspp_and_convs'](resnet_features)
-        
-        # Pass through final classifier (trainable)
+        features = self.backbone(images)['out']
         output = self.classifier(features)
         output = F.interpolate(output, size=images.shape[-2:], mode='bilinear')
         return {'out': output}
 
     @property
     def feature_dim(self):
-        """Return DeepLabV3 feature dimension (output of ASPP)."""
-        return 256  # ASPP output dimension
+        """Return DeepLabV3 feature dimension."""
+        return 2048
 
     @property
     def num_classes(self):
