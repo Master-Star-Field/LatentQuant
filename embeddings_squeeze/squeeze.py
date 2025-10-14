@@ -16,15 +16,64 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone
 from models.lightning_module import VQSqueezeModule
+from models.quantizers import VQWithProjection, FSQWithProjection, LFQWithProjection, ResidualVQWithProjection
 from data import OxfordPetDataModule
 from utils.initialization import initialize_codebook_from_data
 from utils.compression import measure_compression
 from configs.default import get_default_config, update_config_from_args
+from loggers import setup_clearml
+
+
+def create_quantizer(config):
+    """Create quantizer based on config."""
+    if not config.quantizer.enabled:
+        return None
+    
+    qtype = config.quantizer.type.lower()
+    feature_dim = config.model.feature_dim
+    
+    if qtype == 'vq':
+        return VQWithProjection(
+            input_dim=feature_dim,
+            codebook_size=config.quantizer.codebook_size,
+            bottleneck_dim=config.quantizer.bottleneck_dim,
+            decay=config.quantizer.decay,
+            commitment_weight=config.quantizer.commitment_weight
+        )
+    elif qtype == 'fsq':
+        return FSQWithProjection(
+            input_dim=feature_dim,
+            levels=config.quantizer.levels
+        )
+    elif qtype == 'lfq':
+        return LFQWithProjection(
+            input_dim=feature_dim,
+            codebook_size=config.quantizer.codebook_size,
+            entropy_loss_weight=config.quantizer.entropy_loss_weight,
+            diversity_gamma=config.quantizer.diversity_gamma,
+            spherical=config.quantizer.spherical
+        )
+    elif qtype == 'rvq':
+        return ResidualVQWithProjection(
+            input_dim=feature_dim,
+            num_quantizers=config.quantizer.num_quantizers,
+            codebook_size=config.quantizer.codebook_size,
+            bottleneck_dim=config.quantizer.bottleneck_dim,
+            decay=config.quantizer.decay,
+            commitment_weight=config.quantizer.commitment_weight
+        )
+    elif qtype == 'none':
+        return None
+    else:
+        raise ValueError(f"Unknown quantizer type: {qtype}")
 
 
 def create_backbone(config):
     """Create segmentation backbone based on config."""
+    # Set feature_dim based on backbone if not explicitly set
     if config.model.backbone.lower() == "vit":
+        if config.model.feature_dim == 2048:  # Default value, override for ViT
+            config.model.feature_dim = 768
         backbone = ViTSegmentationBackbone(
             num_classes=config.model.num_classes,
             freeze_backbone=config.model.freeze_backbone
@@ -63,17 +112,34 @@ def setup_logging_and_callbacks(config):
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
-    # Logger
-    logger = TensorBoardLogger(
-        save_dir=config.output_dir,
-        name=config.experiment_name,
-        version=None
-    )
+    # Logger - ClearML or TensorBoard
+    if config.logger.use_clearml:
+        clearml_task = setup_clearml(
+            project_name=config.logger.project_name,
+            task_name=config.logger.task_name
+        )
+        if clearml_task:
+            logger = None  # ClearML handles logging automatically
+            print("Using ClearML for logging")
+        else:
+            logger = TensorBoardLogger(
+                save_dir=config.output_dir,
+                name=config.experiment_name,
+                version=None
+            )
+            print("ClearML setup failed, falling back to TensorBoard")
+    else:
+        logger = TensorBoardLogger(
+            save_dir=config.output_dir,
+            name=config.experiment_name,
+            version=None
+        )
+        print("Using TensorBoard for logging")
     
     # Callbacks
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(config.output_dir, config.experiment_name),
-        filename='{epoch:02d}-{val/total_loss:.2f}',
+        filename='{epoch:02d}-{val/loss:.2f}',
         monitor=config.training.monitor,
         mode=config.training.mode,
         save_top_k=config.training.save_top_k,
@@ -99,12 +165,34 @@ def main():
     # Model arguments
     parser.add_argument("--model", type=str, default="vit", 
                        choices=["vit", "deeplab"], help="Backbone model")
-    parser.add_argument("--num_vectors", type=int, default=128, 
-                       help="Number of codebook vectors")
-    parser.add_argument("--commitment_cost", type=float, default=0.25,
-                       help="VQ commitment cost")
-    parser.add_argument("--metric_type", type=str, default="euclidean",
-                       choices=["euclidean", "cosine"], help="Distance metric")
+    parser.add_argument("--num_classes", type=int, default=21,
+                       help="Number of classes")
+    parser.add_argument("--add_adapter", action="store_true",
+                       help="Add adapter layers to frozen backbone")
+    parser.add_argument("--feature_dim", type=int, default=None,
+                       help="Feature dimension (auto-detected if not set)")
+    parser.add_argument("--loss_type", type=str, default="ce",
+                       choices=["ce", "dice", "focal", "combined"], help="Loss function type")
+    
+    # Quantizer arguments
+    parser.add_argument("--quantizer_type", type=str, default="vq",
+                       choices=["vq", "fsq", "lfq", "rvq", "none"], help="Quantizer type")
+    parser.add_argument("--quantizer_enabled", action="store_true", default=True,
+                       help="Enable quantization")
+    parser.add_argument("--codebook_size", type=int, default=512,
+                       help="Codebook size for VQ/LFQ/RVQ")
+    parser.add_argument("--bottleneck_dim", type=int, default=64,
+                       help="Bottleneck dimension for VQ/RVQ")
+    parser.add_argument("--num_quantizers", type=int, default=4,
+                       help="Number of quantizers for RVQ")
+    
+    # Logger arguments
+    parser.add_argument("--use_clearml", action="store_true",
+                       help="Use ClearML for logging")
+    parser.add_argument("--project_name", type=str, default="embeddings_squeeze",
+                       help="Project name for logging")
+    parser.add_argument("--task_name", type=str, default=None,
+                       help="Task name for logging (defaults to experiment_name)")
     
     # Training arguments
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
@@ -145,39 +233,52 @@ def main():
     
     # Create configuration
     config = get_default_config()
-    config = update_config_from_args(config, vars(args))
+    
+    # Set task_name from experiment_name if not provided
+    args_dict = vars(args)
+    if args_dict.get('task_name') is None:
+        args_dict['task_name'] = args_dict.get('experiment_name', 'vq_squeeze')
+    
+    config = update_config_from_args(config, args_dict)
     
     print(f"Starting experiment: {config.experiment_name}")
     print(f"Model: {config.model.backbone}")
     print(f"Dataset: {config.data.dataset}")
-    print(f"VQ vectors: {config.model.num_vectors}")
+    print(f"Quantizer: {config.quantizer.type if config.quantizer.enabled else 'None'}")
+    print(f"Loss type: {config.model.loss_type}")
     print(f"Epochs: {config.training.epochs}")
     
     # Create components
     backbone = create_backbone(config)
+    quantizer = create_quantizer(config)
     data_module = create_data_module(config)
+    
     model = VQSqueezeModule(
         backbone=backbone,
-        num_vectors=config.model.num_vectors,
-        commitment_cost=config.model.commitment_cost,
-        metric_type=config.model.metric_type,
+        quantizer=quantizer,
+        num_classes=config.model.num_classes,
         learning_rate=config.training.learning_rate,
-        vq_loss_weight=config.training.vq_loss_weight
+        vq_loss_weight=config.training.vq_loss_weight,
+        loss_type=config.model.loss_type,
+        class_weights=config.model.class_weights,
+        add_adapter=config.model.add_adapter,
+        feature_dim=config.model.feature_dim
     )
 
     # Setup data
     data_module.setup('fit')
     
-    # Initialize codebook if requested
-    if config.initialize_codebook:
-        print("Initializing codebook with k-means...")
-        initialize_codebook_from_data(
-            model.vq, 
-            backbone, 
-            data_module.train_dataloader(max_batches=config.training.max_batches), 
-            model.device,
-            max_samples=config.max_init_samples
-        )
+    # Initialize codebook if requested (only for VQ-based quantizers)
+    # Note: Codebook initialization is currently disabled in this version
+    # if config.initialize_codebook and quantizer is not None:
+    #     print("Initializing codebook with k-means...")
+    #     initialize_codebook_from_data(
+    #         quantizer,
+    #         backbone,
+    #         data_module.train_dataloader(max_batches=config.training.max_batches),
+    #         model.device,
+    #         max_samples=config.max_init_samples
+    #     )
     
     # Setup logging and callbacks
     logger, callbacks = setup_logging_and_callbacks(config)
@@ -189,32 +290,13 @@ def main():
         callbacks=callbacks,
         log_every_n_steps=config.training.log_every_n_steps,
         val_check_interval=config.training.val_check_interval,
-        accelerator="gpu", devices=1,
-        num_sanity_val_steps=0,
-        profiler="simple",
+        accelerator='auto', devices='auto',
         precision=16 if torch.cuda.is_available() else 32,
     )
     
     # Train
     print("Starting training...")
     trainer.fit(model, data_module)
-    
-    # Test compression
-    # print("Measuring compression...")
-    # data_module.setup('test')
-    # compression_ratio = measure_compression(
-    #     model.vq,
-    #     backbone, 
-    #     data_module.test_dataloader(max_batches=config.training.max_batches),
-    #     model.device
-    # )
-    # print(f"Training completed!")
-    # print(f"Compression ratio: {compression_ratio:.1f}x")
-    # print(f"Results saved to: {config.output_dir}/{config.experiment_name}")
-    
-    # print(f"Training completed!")
-    # print(f"Compression ratio: {compression_ratio:.1f}x")
-    # print(f"Results saved to: {config.output_dir}/{config.experiment_name}")
 
 
 if __name__ == "__main__":

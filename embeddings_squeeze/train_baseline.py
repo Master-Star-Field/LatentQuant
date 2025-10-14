@@ -18,11 +18,17 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone
+from models.baseline_module import BaselineSegmentationModule
 from data import OxfordPetDataModule
 from configs.default import get_default_config, update_config_from_args
+from loggers import setup_clearml
 
 
-class BaselineSegmentationModule(pl.LightningModule):
+# Use imported BaselineSegmentationModule instead of defining it here
+_UNUSED_BaselineSegmentationModule = BaselineSegmentationModule
+
+
+class _DeprecatedBaselineSegmentationModule(pl.LightningModule):
     """
     Simple Lightning module that wraps existing backbone directly.
     
@@ -141,7 +147,10 @@ class BaselineSegmentationModule(pl.LightningModule):
 
 def create_backbone(config):
     """Create segmentation backbone based on config."""
+    # Set feature_dim based on backbone if not explicitly set
     if config.model.backbone.lower() == "vit":
+        if config.model.feature_dim == 2048:  # Default value, override for ViT
+            config.model.feature_dim = 768
         backbone = ViTSegmentationBackbone(
             num_classes=config.model.num_classes,
             freeze_backbone=True  # Always freeze backbone, train only classifier
@@ -180,26 +189,40 @@ def setup_logging_and_callbacks(config):
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
-    # Logger
-    logger = TensorBoardLogger(
-        save_dir=config.output_dir,
-        name=config.experiment_name,
-        version=None
-    )
+    # Logger - ClearML or TensorBoard
+    if config.logger.use_clearml:
+        clearml_task = setup_clearml(
+            project_name=config.logger.project_name,
+            task_name=config.logger.task_name
+        )
+        if clearml_task:
+            logger = None  # ClearML handles logging automatically
+            print("Using ClearML for logging")
+        else:
+            raise ValueError("ClearML setup failed")
+    else:
+        logger = TensorBoardLogger(
+            save_dir=config.output_dir,
+            name=config.experiment_name,
+            version=None
+        )
+        print("Using TensorBoard for logging")
     
     # Callbacks
+    monitor_metric = 'val/loss'  # Unified metric name
+    
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(config.output_dir, config.experiment_name),
-        filename='{epoch:02d}-{val/seg_loss:.2f}',
-        monitor=config.training.monitor,
-        mode=config.training.mode,
+        filename='{epoch:02d}-{val/loss:.2f}',
+        monitor=monitor_metric,
+        mode='min',  # Minimize loss
         save_top_k=config.training.save_top_k,
         save_last=True
     )
     
     early_stop_callback = EarlyStopping(
-        monitor=config.training.monitor,
-        mode=config.training.mode,
+        monitor=monitor_metric,
+        mode='min',  # Minimize loss
         patience=5,
         verbose=True
     )
@@ -216,6 +239,18 @@ def main():
     # Model arguments
     parser.add_argument("--model", type=str, default="vit", 
                        choices=["vit", "deeplab"], help="Backbone model")
+    parser.add_argument("--num_classes", type=int, default=21,
+                       help="Number of classes")
+    parser.add_argument("--loss_type", type=str, default="ce",
+                       choices=["ce", "dice", "focal", "combined"], help="Loss function type")
+    
+    # Logger arguments
+    parser.add_argument("--use_clearml", action="store_true",
+                       help="Use ClearML for logging")
+    parser.add_argument("--project_name", type=str, default="embeddings_squeeze",
+                       help="Project name for logging")
+    parser.add_argument("--task_name", type=str, default=None,
+                       help="Task name for logging (defaults to experiment_name)")
     
     # Training arguments
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
@@ -235,7 +270,7 @@ def main():
     # Experiment arguments
     parser.add_argument("--output_dir", type=str, default="./outputs",
                        help="Output directory")
-    parser.add_argument("--experiment_name", type=str, default="baseline_segmentation",
+    parser.add_argument("--experiment_name", type=str, default="segmentation_baseline",
                        help="Experiment name")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     
@@ -248,14 +283,21 @@ def main():
     
     # Create configuration
     config = get_default_config()
-    config = update_config_from_args(config, vars(args))
+    
+    # Set task_name from experiment_name if not provided
+    args_dict = vars(args)
+    if args_dict.get('task_name') is None:
+        args_dict['task_name'] = args_dict.get('experiment_name', 'segmentation_baseline')
+    
+    config = update_config_from_args(config, args_dict)
     
     # Override experiment name to indicate baseline
-    config.experiment_name = f"{config.experiment_name}_baseline"
+    config.experiment_name = f"{config.experiment_name}"
     
     print(f"Starting baseline experiment: {config.experiment_name}")
     print(f"Model: {config.model.backbone}")
     print(f"Dataset: {config.data.dataset}")
+    print(f"Loss type: {config.model.loss_type}")
     print(f"Epochs: {config.training.epochs}")
     print("Training strategy: Frozen backbone + trainable classifier")
     
@@ -264,7 +306,10 @@ def main():
     data_module = create_data_module(config)
     model = BaselineSegmentationModule(
         backbone=backbone,
-        learning_rate=config.training.learning_rate
+        num_classes=config.model.num_classes,
+        learning_rate=config.training.learning_rate,
+        loss_type=config.model.loss_type,
+        class_weights=config.model.class_weights
     )
 
     # Setup data
@@ -280,9 +325,7 @@ def main():
         callbacks=callbacks,
         log_every_n_steps=config.training.log_every_n_steps,
         val_check_interval=config.training.val_check_interval,
-        accelerator="gpu", devices=1,
-        num_sanity_val_steps=0,
-        profiler="simple",
+        accelerator='auto', devices='auto',
         precision=16 if torch.cuda.is_available() else 32,
     )
     

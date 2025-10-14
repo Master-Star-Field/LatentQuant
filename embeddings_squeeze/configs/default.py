@@ -7,12 +7,43 @@ from typing import Optional, Dict, Any
 
 
 @dataclass
+class QuantizerConfig:
+    """Quantizer configuration."""
+    enabled: bool = True
+    type: str = "vq"  # "vq", "fsq", "lfq", "rvq", "none"
+    
+    # VQ-specific
+    codebook_size: int = 512
+    bottleneck_dim: int = 64
+    decay: float = 0.99
+    commitment_weight: float = 0.25
+    
+    # FSQ-specific
+    levels: list = field(default_factory=lambda: [8, 5, 5, 5])
+    
+    # LFQ-specific
+    entropy_loss_weight: float = 0.1
+    diversity_gamma: float = 0.1
+    spherical: bool = False
+    
+    # RVQ-specific
+    num_quantizers: int = 4
+
+
+@dataclass
+class LoggerConfig:
+    """Logger configuration."""
+    use_clearml: bool = True
+    use_tensorboard: bool = False
+    project_name: str = "embeddings_squeeze"
+    task_name: str = "vq_compression"
+    credentials_file: str = "clearml_credentials.yaml"
+
+
+@dataclass
 class ModelConfig:
     """Model architecture configuration."""
     backbone: str = "vit"  # "vit" or "deeplab"
-    num_vectors: int = 128
-    commitment_cost: float = 0.25
-    metric_type: str = "euclidean"  # "euclidean" or "cosine"
     num_classes: int = 21
     freeze_backbone: bool = True
     
@@ -21,6 +52,14 @@ class ModelConfig:
     
     # DeepLab specific  
     deeplab_weights: str = "COCO_WITH_VOC_LABELS_V1"
+    
+    # Adapter configuration
+    add_adapter: bool = False
+    feature_dim: int = 768  # Default for ViT
+    
+    # Loss configuration
+    loss_type: str = "ce"  # "ce", "dice", "focal", "combined"
+    class_weights: Optional[list] = None  # e.g., [0.5, 1.5, 3.0] for class imbalance
 
 
 @dataclass
@@ -44,7 +83,7 @@ class TrainingConfig:
     
     # Checkpointing
     save_top_k: int = 3
-    monitor: str = "val/total_loss"
+    monitor: str = "val/loss"
     mode: str = "min"
 
 
@@ -67,6 +106,8 @@ class ExperimentConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     data: DataConfig = field(default_factory=DataConfig)
+    quantizer: QuantizerConfig = field(default_factory=QuantizerConfig)
+    logger: LoggerConfig = field(default_factory=LoggerConfig)
     
     # Experiment metadata
     experiment_name: str = "vq_squeeze"
@@ -74,7 +115,7 @@ class ExperimentConfig:
     seed: int = 42
     
     # Initialization
-    initialize_codebook: bool = False
+    initialize_codebook: bool = True
     max_init_samples: int = 50000
 
 
@@ -97,12 +138,36 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
     # Model config
     if "model" in args:
         config.model.backbone = args["model"]
-    if "num_vectors" in args:
-        config.model.num_vectors = args["num_vectors"]
-    if "commitment_cost" in args:
-        config.model.commitment_cost = args["commitment_cost"]
-    if "metric_type" in args:
-        config.model.metric_type = args["metric_type"]
+    if "num_classes" in args:
+        config.model.num_classes = args["num_classes"]
+    if "add_adapter" in args:
+        config.model.add_adapter = args["add_adapter"]
+    if "feature_dim" in args:
+        config.model.feature_dim = args["feature_dim"]
+    if "loss_type" in args:
+        config.model.loss_type = args["loss_type"]
+    if "class_weights" in args:
+        config.model.class_weights = args["class_weights"]
+    
+    # Quantizer config
+    if "quantizer_type" in args:
+        config.quantizer.type = args["quantizer_type"]
+    if "quantizer_enabled" in args:
+        config.quantizer.enabled = args["quantizer_enabled"]
+    if "codebook_size" in args:
+        config.quantizer.codebook_size = args["codebook_size"]
+    if "bottleneck_dim" in args:
+        config.quantizer.bottleneck_dim = args["bottleneck_dim"]
+    if "num_quantizers" in args:
+        config.quantizer.num_quantizers = args["num_quantizers"]
+    
+    # Logger config
+    if "use_clearml" in args:
+        config.logger.use_clearml = args["use_clearml"]
+    if "project_name" in args:
+        config.logger.project_name = args["project_name"]
+    if "task_name" in args:
+        config.logger.task_name = args["task_name"]
     
     # Training config
     if "epochs" in args:
