@@ -70,15 +70,19 @@ def create_quantizer(config):
 
 def create_backbone(config):
     """Create segmentation backbone based on config."""
-    # Set feature_dim based on backbone if not explicitly set
+    # Auto-detect feature_dim based on backbone if not set or invalid
     if config.model.backbone.lower() == "vit":
-        if config.model.feature_dim == 2048:  # Default value, override for ViT
+        # ViT uses 768-dim features
+        if config.model.feature_dim is None or config.model.feature_dim == 2048:
             config.model.feature_dim = 768
         backbone = ViTSegmentationBackbone(
             num_classes=config.model.num_classes,
             freeze_backbone=config.model.freeze_backbone
         )
     elif config.model.backbone.lower() == "deeplab":
+        # DeepLab uses 2048-dim features
+        if config.model.feature_dim is None:
+            config.model.feature_dim = 2048
         backbone = DeepLabV3SegmentationBackbone(
             weights_name=config.model.deeplab_weights,
             num_classes=config.model.num_classes,
@@ -249,8 +253,12 @@ def main():
     print(f"Epochs: {config.training.epochs}")
     
     # Create components
+    # IMPORTANT: Create backbone first to auto-detect feature_dim
     backbone = create_backbone(config)
+    
+    # Now create quantizer with correct feature_dim
     quantizer = create_quantizer(config)
+    
     data_module = create_data_module(config)
     
     model = VQSqueezeModule(

@@ -142,7 +142,7 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
         config.model.num_classes = args["num_classes"]
     if "add_adapter" in args:
         config.model.add_adapter = args["add_adapter"]
-    if "feature_dim" in args:
+    if "feature_dim" in args and args["feature_dim"] is not None:
         config.model.feature_dim = args["feature_dim"]
     if "loss_type" in args:
         config.model.loss_type = args["loss_type"]
