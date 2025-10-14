@@ -116,11 +116,11 @@ def setup_logging_and_callbacks(config):
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
-    print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
-    clearml_task = setup_clearml(
+    setup_clearml(
         project_name=config.logger.project_name,
         task_name=config.logger.task_name
     )
+    logger = None
     
     # Logger - ClearML or TensorBoard
     # if config.logger.use_clearml:
@@ -292,8 +292,6 @@ def main():
     
     # Setup logging and callbacks
     logger, callbacks = setup_logging_and_callbacks(config)
-    
-    return
 
     # Create trainer
     trainer = pl.Trainer(
