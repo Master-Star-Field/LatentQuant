@@ -1,5 +1,35 @@
 """
 ClearML logger integration with credentials management.
+
+Usage Examples:
+    # Setup ClearML
+    task = setup_clearml(project_name="my_project", task_name="experiment_1")
+    logger = ClearMLLogger(task)
+    
+    # Log scalar metrics (creates unified graphs)
+    for i in range(100):
+        logger.log_scalar("loss", "train", 1.0/(i+1), iteration=i)
+        logger.log_scalar("loss", "val", 0.5/(i+1), iteration=i)
+    
+    # Log images (grayscale)
+    import numpy as np
+    img = np.eye(256, 256, dtype=np.uint8) * 255
+    logger.log_image("predictions", "sample_1", img, iteration=0)
+    
+    # Log RGB images
+    img_rgb = np.zeros((256, 256, 3), dtype=np.uint8)
+    img_rgb[:, :, 0] = 255  # Red channel
+    logger.log_image("predictions", "sample_rgb", img_rgb, iteration=0)
+    
+    # Log multiple images at once
+    images = [img1, img2, img3]
+    logger.log_images_batch("batch_samples", "epoch_1", images, iteration=0)
+    
+    # Log text
+    logger.log_text("Training started successfully!")
+    
+    # Finalize
+    logger.finalize()
 """
 
 import os
@@ -87,6 +117,7 @@ def setup_clearml(project_name: str, task_name: str, auto_connect: bool = True):
 class ClearMLLogger:
     """
     Wrapper for ClearML logging compatible with PyTorch Lightning.
+    Supports scalar metrics, plots, images, and text logging.
     """
     
     def __init__(self, task: Task):
@@ -111,6 +142,86 @@ class ClearMLLogger:
                 series=series,
                 value=value,
                 iteration=step
+            )
+    
+    def log_scalar(self, title: str, series: str, value: float, iteration: int):
+        """
+        Log a single scalar value to ClearML.
+        
+        Args:
+            title: Graph title (e.g., "loss", "accuracy")
+            series: Series name within the graph (e.g., "train", "val")
+            value: Scalar value to log
+            iteration: Iteration/step number
+            
+        Example:
+            logger.log_scalar("loss", "train", 0.5, iteration=100)
+            logger.log_scalar("loss", "val", 0.3, iteration=100)
+        """
+        if self.logger is None:
+            return
+        
+        self.logger.report_scalar(
+            title=title,
+            series=series,
+            value=value,
+            iteration=iteration
+        )
+    
+    def log_image(self, title: str, series: str, image, iteration: int):
+        """
+        Log an image to ClearML.
+        
+        Args:
+            title: Image title/group
+            series: Series name (e.g., "predictions", "ground_truth")
+            image: Image as numpy array (H, W) or (H, W, C) for grayscale/RGB
+                   Supports uint8 (0-255) or float (0-1)
+            iteration: Iteration/step number
+            
+        Example:
+            # Grayscale image
+            img = np.eye(256, 256, dtype=np.uint8) * 255
+            logger.log_image("predictions", "epoch_1", img, iteration=0)
+            
+            # RGB image
+            img_rgb = np.zeros((256, 256, 3), dtype=np.uint8)
+            img_rgb[:, :, 0] = 255  # Red channel
+            logger.log_image("predictions", "epoch_1_rgb", img_rgb, iteration=0)
+        """
+        if self.logger is None:
+            return
+        
+        self.logger.report_image(
+            title=title,
+            series=series,
+            iteration=iteration,
+            image=image
+        )
+    
+    def log_images_batch(self, title: str, series: str, images: list, iteration: int):
+        """
+        Log multiple images to ClearML.
+        
+        Args:
+            title: Image title/group
+            series: Series name
+            images: List of images (numpy arrays)
+            iteration: Iteration/step number
+            
+        Example:
+            images = [img1, img2, img3]
+            logger.log_images_batch("samples", "batch_0", images, iteration=0)
+        """
+        if self.logger is None:
+            return
+        
+        for idx, image in enumerate(images):
+            self.logger.report_image(
+                title=title,
+                series=f"{series}_img_{idx}",
+                iteration=iteration,
+                image=image
             )
     
     def log_text(self, text: str, title: str = "Info"):
