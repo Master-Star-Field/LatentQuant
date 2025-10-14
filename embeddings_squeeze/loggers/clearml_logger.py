@@ -37,6 +37,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import clearml
 from clearml import Task
+from pytorch_lightning.callbacks import Callback
 
 
 def load_credentials(config_dir: str = None):
@@ -267,7 +268,7 @@ class ClearMLLogger:
             self.task.close()
 
 
-class ClearMLUploadCallback:
+class ClearMLUploadCallback(Callback):
     """
     PyTorch Lightning callback for uploading checkpoints and embeddings to ClearML.
     
@@ -297,6 +298,7 @@ class ClearMLUploadCallback:
             checkpoint_dir: Directory containing checkpoints
             embedding_dir: Directory containing embeddings
         """
+        super().__init__()
         self.task = task
         self.clearml_logger = clearml_logger
         self.checkpoint_dir = checkpoint_dir
