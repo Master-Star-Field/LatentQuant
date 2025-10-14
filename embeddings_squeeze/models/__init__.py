@@ -1,11 +1,27 @@
 """Model architectures and components."""
 
-from .vq.quantizer import VectorQuantizer
+from .quantizers import (
+    VQWithProjection,
+    FSQWithProjection,
+    LFQWithProjection,
+    ResidualVQWithProjection,
+    BaseQuantizer,
+)
+from .losses import DiceLoss, FocalLoss, CombinedLoss
 from .backbones.base import SegmentationBackbone
 from .lightning_module import VQSqueezeModule
+from .baseline_module import BaselineSegmentationModule
 
 __all__ = [
-    "VectorQuantizer",
+    "VQWithProjection",
+    "FSQWithProjection",
+    "LFQWithProjection",
+    "ResidualVQWithProjection",
+    "BaseQuantizer",
+    "DiceLoss",
+    "FocalLoss",
+    "CombinedLoss",
     "SegmentationBackbone",
     "VQSqueezeModule",
+    "BaselineSegmentationModule",
 ]
