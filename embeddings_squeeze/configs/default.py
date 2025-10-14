@@ -70,7 +70,7 @@ class TrainingConfig:
     max_batches: int = None
     learning_rate: float = 1e-4
     vq_loss_weight: float = 0.1
-    num_workers: int = -1
+    num_workers: int = 6
     pin_memory: bool = True
     
     # Optimization
