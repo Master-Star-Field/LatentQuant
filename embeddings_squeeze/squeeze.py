@@ -306,6 +306,11 @@ def main():
     # Train
     print("Starting training...")
     trainer.fit(model, data_module)
+    
+    # Finalize ClearML logging
+    if clearml_logger:
+        print("Finalizing ClearML task...")
+        clearml_logger.finalize()
 
 
 if __name__ == "__main__":

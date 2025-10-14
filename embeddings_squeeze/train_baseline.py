@@ -356,6 +356,11 @@ def main():
     print("Starting training...")
     trainer.fit(model, data_module)
     
+    # Finalize ClearML logging
+    if clearml_logger:
+        print("Finalizing ClearML task...")
+        clearml_logger.finalize()
+    
     print(f"Baseline training completed!")
     print(f"Results saved to: {config.output_dir}/{config.experiment_name}")
 
