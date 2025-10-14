@@ -230,8 +230,137 @@ class ClearMLLogger:
             return
         self.logger.report_text(text, print_console=True)
     
+    def report_text(self, text: str):
+        """Report text to ClearML (alias for log_text with default title)."""
+        self.log_text(text)
+    
+    def report_plotly(self, title: str, series: str, iteration: int, figure):
+        """
+        Report a Plotly figure to ClearML.
+        
+        Args:
+            title: Plot title/group
+            series: Series name
+            iteration: Iteration/step number
+            figure: Plotly figure object
+            
+        Example:
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=[1,2,3], y=[4,5,6], mode='lines', name='data'))
+            fig.update_layout(title="My Plot", xaxis_title="x", yaxis_title="y")
+            logger.report_plotly("metrics", "loss", iteration=0, figure=fig)
+        """
+        if self.logger is None:
+            return
+        
+        self.logger.report_plotly(
+            title=title,
+            series=series,
+            iteration=iteration,
+            figure=figure
+        )
+    
     def finalize(self):
         """Finalize logging and close task."""
         if self.task:
             self.task.close()
+
+
+class ClearMLUploadCallback:
+    """
+    PyTorch Lightning callback for uploading checkpoints and embeddings to ClearML.
+    
+    Automatically uploads:
+    - Latest checkpoint after each validation epoch
+    - Per-epoch validation embeddings
+    
+    Usage:
+        from pytorch_lightning import Trainer
+        from embeddings_squeeze.loggers import ClearMLUploadCallback, setup_clearml
+        
+        task = setup_clearml(project_name="my_project", task_name="experiment_1")
+        logger = ClearMLLogger(task) if task else None
+        callback = ClearMLUploadCallback(task, logger, checkpoint_dir="checkpoints")
+        
+        trainer = Trainer(callbacks=[callback], ...)
+    """
+    
+    def __init__(self, task: Task, clearml_logger: ClearMLLogger = None, 
+                 checkpoint_dir: str = "checkpoints", embedding_dir: str = "embeddings"):
+        """
+        Initialize ClearML upload callback.
+        
+        Args:
+            task: ClearML Task object
+            clearml_logger: ClearML logger for text reporting (optional)
+            checkpoint_dir: Directory containing checkpoints
+            embedding_dir: Directory containing embeddings
+        """
+        self.task = task
+        self.clearml_logger = clearml_logger
+        self.checkpoint_dir = checkpoint_dir
+        self.embedding_dir = embedding_dir
+    
+    def on_validation_epoch_end(self, trainer, pl_module):
+        """Called after validation epoch ends."""
+        if self.task is None:
+            return
+        
+        # Upload latest checkpoint
+        try:
+            ckpt_path = self._find_latest_checkpoint()
+            if ckpt_path:
+                self.task.upload_artifact(
+                    name=f"checkpoint_epoch{pl_module.current_epoch}",
+                    artifact_object=ckpt_path
+                )
+                if self.clearml_logger:
+                    self.clearml_logger.report_text(f"Uploaded checkpoint: {ckpt_path}")
+        except Exception as e:
+            if self.clearml_logger:
+                self.clearml_logger.report_text(f"Failed uploading checkpoint: {e}")
+        
+        # Upload per-epoch embedding
+        try:
+            emb_path = os.path.join(
+                self.embedding_dir, 
+                f"val_embedding_epoch{pl_module.current_epoch}.pt"
+            )
+            if os.path.exists(emb_path):
+                self.task.upload_artifact(
+                    name=f"val_embedding_epoch{pl_module.current_epoch}",
+                    artifact_object=emb_path
+                )
+                if self.clearml_logger:
+                    self.clearml_logger.report_text(f"Uploaded embedding: {emb_path}")
+                # Clean up local embedding file after upload
+                try:
+                    os.remove(emb_path)
+                except Exception:
+                    pass
+        except Exception as e:
+            if self.clearml_logger:
+                self.clearml_logger.report_text(f"Failed uploading embedding: {e}")
+    
+    def _find_latest_checkpoint(self):
+        """Find the most recently modified checkpoint file."""
+        import glob
+        
+        # Search for checkpoints recursively
+        patterns = [
+            os.path.join(self.checkpoint_dir, "**/*.ckpt"),
+            os.path.join(self.checkpoint_dir, "*.ckpt"),
+        ]
+        
+        matches = []
+        for pattern in patterns:
+            matches.extend(glob.glob(pattern, recursive=True))
+        
+        if not matches:
+            return None
+        
+        # Return most recently modified
+        matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        return matches[0]
 

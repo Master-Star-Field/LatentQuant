@@ -16,7 +16,7 @@ from .models.backbones.base import SegmentationBackbone
 from .models.lightning_module import VQSqueezeModule
 from .models.baseline_module import BaselineSegmentationModule
 from .data.base import BaseDataModule
-from .loggers import setup_clearml
+from .loggers import setup_clearml, ClearMLLogger
 
 __all__ = [
     "VQWithProjection",
@@ -29,4 +29,5 @@ __all__ = [
     "BaselineSegmentationModule",
     "BaseDataModule",
     "setup_clearml",
+    "ClearMLLogger",
 ]

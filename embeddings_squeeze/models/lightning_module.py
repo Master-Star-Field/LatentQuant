@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from typing import Dict, Any, Optional
-from torchmetrics import JaccardIndex, Accuracy
+from torchmetrics import JaccardIndex, Accuracy, Precision, Recall, F1Score
 
 from .backbones.base import SegmentationBackbone
 from .losses import DiceLoss, FocalLoss, CombinedLoss
@@ -37,10 +37,11 @@ class VQSqueezeModule(pl.LightningModule):
         class_weights: Optional[list] = None,
         add_adapter: bool = False,
         feature_dim: int = 2048,
+        clearml_logger: Optional[Any] = None,
         **kwargs
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=['backbone', 'quantizer'])
+        self.save_hyperparameters(ignore=['backbone', 'quantizer', 'clearml_logger'])
         
         self.num_classes = num_classes
         self.learning_rate = learning_rate
@@ -64,11 +65,29 @@ class VQSqueezeModule(pl.LightningModule):
         self.val_iou = JaccardIndex(task="multiclass", num_classes=num_classes)
         self.train_acc = Accuracy(task="multiclass", num_classes=num_classes)
         self.val_acc = Accuracy(task="multiclass", num_classes=num_classes)
+        self.train_prec = Precision(task="multiclass", num_classes=num_classes, average="macro")
+        self.val_prec = Precision(task="multiclass", num_classes=num_classes, average="macro")
+        self.train_rec = Recall(task="multiclass", num_classes=num_classes, average="macro")
+        self.val_rec = Recall(task="multiclass", num_classes=num_classes, average="macro")
+        self.train_f1 = F1Score(task="multiclass", num_classes=num_classes, average="macro")
+        self.val_f1 = F1Score(task="multiclass", num_classes=num_classes, average="macro")
         
-        # Embedding storage
+        # Epoch-wise stats tracking for Plotly
+        self.epoch_stats: Dict[str, list] = {
+            "train_loss": [], "val_loss": [], 
+            "train_iou": [], "val_iou": [],
+            "train_precision": [], "val_precision": [], 
+            "train_recall": [], "val_recall": [],
+            "train_f1": [], "val_f1": []
+        }
+        
+        # ClearML logger
+        self.clearml_logger = clearml_logger
+        
+        # Embedding storage (per-epoch, first batch only)
         self.embedding_dir = "embeddings"
         os.makedirs(self.embedding_dir, exist_ok=True)
-        self.all_val_features = []
+        self._first_val_batch_features = None
     
     def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool):
         """Setup backbone with optional adapter layers."""
@@ -183,11 +202,17 @@ class VQSqueezeModule(pl.LightningModule):
         # Compute metrics
         iou = self.train_iou(output, masks)
         acc = self.train_acc(output, masks)
+        prec = self.train_prec(output, masks)
+        rec = self.train_rec(output, masks)
+        f1 = self.train_f1(output, masks)
         
         # Log metrics
         self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('train/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('train/precision', prec, on_step=False, on_epoch=True)
+        self.log('train/recall', rec, on_step=False, on_epoch=True)
+        self.log('train/f1', f1, on_step=False, on_epoch=True)
         
         return loss
 
@@ -209,36 +234,127 @@ class VQSqueezeModule(pl.LightningModule):
         # Compute metrics
         iou = self.val_iou(output, masks)
         acc = self.val_acc(output, masks)
+        prec = self.val_prec(output, masks)
+        rec = self.val_rec(output, masks)
+        f1 = self.val_f1(output, masks)
         
         # Log metrics
         self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log('val/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('val/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val/precision', prec, on_step=False, on_epoch=True)
+        self.log('val/recall', rec, on_step=False, on_epoch=True)
+        self.log('val/f1', f1, on_step=False, on_epoch=True)
         
-        # Save features for embedding extraction
-        self.all_val_features.append(features.detach().cpu())
+        # Save only first batch features for this epoch
+        if batch_idx == 0:
+            self._first_val_batch_features = features.detach().cpu()
         
         return loss
     
-    def on_train_end(self):
-        """Save final embeddings and model weights."""
-        # Save model weights
-        save_path = os.path.join(self.embedding_dir, "final_model.pth")
-        try:
-            torch.save(self.state_dict(), save_path)
-            print(f"Model weights saved: {save_path}")
-        except Exception as e:
-            print(f"Failed to save model weights: {e}")
+    def on_validation_epoch_end(self):
+        """Called after validation epoch ends - log Plotly visualizations and save embeddings."""
+        # Collect epoch stats from trainer callback metrics
+        cm = self.trainer.callback_metrics
         
-        # Save validation embeddings
-        if self.all_val_features:
-            try:
-                all_features = torch.cat(self.all_val_features, dim=0)
-                emb_path = os.path.join(self.embedding_dir, "val_embeddings_final.pt")
-                torch.save(all_features, emb_path)
-                print(f"Saved validation embeddings: {emb_path}")
-            except Exception as e:
-                print(f"Failed to save embeddings: {e}")
+        def push_if_exists(k_from, k_to):
+            """Helper to extract metrics from callback_metrics."""
+            if k_from in cm:
+                val = cm[k_from]
+                try:
+                    v = float(val)
+                except Exception:
+                    v = val.item()
+                self.epoch_stats[k_to].append(v)
+        
+        # Push metrics to epoch_stats
+        keys = [
+            "train/loss", "val/loss", "train/iou", "val/iou",
+            "train/precision", "val/precision", "train/recall", "val/recall",
+            "train/f1", "val/f1"
+        ]
+        key_mapping = {
+            "train/loss": "train_loss", "val/loss": "val_loss",
+            "train/iou": "train_iou", "val/iou": "val_iou",
+            "train/precision": "train_precision", "val/precision": "val_precision",
+            "train/recall": "train_recall", "val/recall": "val_recall",
+            "train/f1": "train_f1", "val/f1": "val_f1"
+        }
+        for k_from, k_to in key_mapping.items():
+            push_if_exists(k_from, k_to)
+        
+        # Generate Plotly visualizations
+        try:
+            import plotly.graph_objects as go
+            
+            epoch = self.current_epoch
+            epochs = list(range(len(self.epoch_stats["val_loss"])))
+            
+            # Loss plot
+            fig_loss = go.Figure()
+            if len(self.epoch_stats["train_loss"]) > 0:
+                fig_loss.add_trace(go.Scatter(
+                    x=epochs, y=self.epoch_stats["train_loss"],
+                    mode="lines+markers", name="train_loss"
+                ))
+            if len(self.epoch_stats["val_loss"]) > 0:
+                fig_loss.add_trace(go.Scatter(
+                    x=epochs, y=self.epoch_stats["val_loss"],
+                    mode="lines+markers", name="val_loss"
+                ))
+            fig_loss.update_layout(title="Loss", xaxis_title="epoch", yaxis_title="loss")
+            
+            if self.clearml_logger:
+                self.clearml_logger.report_plotly(
+                    title="Loss", series="loss", iteration=epoch, figure=fig_loss
+                )
+            
+            # Metrics plot
+            fig_m = go.Figure()
+            metrics_to_plot = [
+                ("train_iou", "val_iou"),
+                ("train_precision", "val_precision"),
+                ("train_recall", "val_recall"),
+                ("train_f1", "val_f1")
+            ]
+            for train_k, val_k in metrics_to_plot:
+                if len(self.epoch_stats[train_k]) > 0:
+                    fig_m.add_trace(go.Scatter(
+                        x=epochs, y=self.epoch_stats[train_k],
+                        mode="lines+markers", name=train_k
+                    ))
+                if len(self.epoch_stats[val_k]) > 0:
+                    fig_m.add_trace(go.Scatter(
+                        x=epochs, y=self.epoch_stats[val_k],
+                        mode="lines+markers", name=val_k
+                    ))
+            fig_m.update_layout(title="Metrics", xaxis_title="epoch", yaxis_title="value")
+            
+            if self.clearml_logger:
+                self.clearml_logger.report_plotly(
+                    title="Metrics", series="metrics", iteration=epoch, figure=fig_m
+                )
+        except Exception as e:
+            if self.clearml_logger:
+                self.clearml_logger.report_text(
+                    f"Plotly reporting failed at epoch {self.current_epoch}: {e}"
+                )
+        
+        # Save per-epoch embedding (first validation batch only)
+        try:
+            if self._first_val_batch_features is not None:
+                emb_path = os.path.join(
+                    self.embedding_dir,
+                    f"val_embedding_epoch{self.current_epoch}.pt"
+                )
+                torch.save(self._first_val_batch_features, emb_path)
+                if self.clearml_logger:
+                    self.clearml_logger.report_text(f"Saved small embedding: {emb_path}")
+                # Reset for next epoch
+                self._first_val_batch_features = None
+        except Exception as e:
+            if self.clearml_logger:
+                self.clearml_logger.report_text(f"Failed saving epoch embedding: {e}")
 
     def configure_optimizers(self):
         """Configure optimizer - only trainable parameters."""

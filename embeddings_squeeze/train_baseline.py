@@ -21,7 +21,7 @@ from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackb
 from models.baseline_module import BaselineSegmentationModule
 from data import OxfordPetDataModule
 from configs.default import get_default_config, update_config_from_args
-from loggers import setup_clearml
+from loggers import setup_clearml, ClearMLLogger, ClearMLUploadCallback
 
 
 # Use imported BaselineSegmentationModule instead of defining it here
@@ -193,19 +193,24 @@ def setup_logging_and_callbacks(config):
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
-    # Logger - ClearML or TensorBoard
+    # Setup ClearML
     if config.logger.use_clearml:
         clearml_task = setup_clearml(
             project_name=config.logger.project_name,
             task_name=config.logger.task_name
         )
-        if clearml_task:
-            logger = None  # ClearML handles logging automatically
-            print("Using ClearML for logging")
-        else:
-            raise ValueError("ClearML setup failed")
     else:
-        logger = TensorBoardLogger(
+        clearml_task = None
+    
+    # Create ClearML logger wrapper
+    clearml_logger = ClearMLLogger(clearml_task) if clearml_task else None
+    
+    # PyTorch Lightning logger (None for ClearML auto-logging, TensorBoard otherwise)
+    if clearml_task:
+        pl_logger = None
+        print("Using ClearML for logging")
+    else:
+        pl_logger = TensorBoardLogger(
             save_dir=config.output_dir,
             name=config.experiment_name,
             version=None
@@ -214,9 +219,10 @@ def setup_logging_and_callbacks(config):
     
     # Callbacks
     monitor_metric = 'val/loss'  # Unified metric name
+    checkpoint_dir = os.path.join(config.output_dir, config.experiment_name)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=os.path.join(config.output_dir, config.experiment_name),
+        dirpath=checkpoint_dir,
         filename='{epoch:02d}-{val/loss:.2f}',
         monitor=monitor_metric,
         mode='min',  # Minimize loss
@@ -233,7 +239,18 @@ def setup_logging_and_callbacks(config):
     
     callbacks = [checkpoint_callback, early_stop_callback]
     
-    return logger, callbacks
+    # Add ClearML upload callback if task exists
+    if clearml_task:
+        clearml_upload_callback = ClearMLUploadCallback(
+            task=clearml_task,
+            clearml_logger=clearml_logger,
+            checkpoint_dir=checkpoint_dir,
+            embedding_dir="embeddings"
+        )
+        callbacks.append(clearml_upload_callback)
+        print("ClearML upload callback enabled")
+    
+    return pl_logger, clearml_logger, callbacks
 
 
 def main():
@@ -308,24 +325,26 @@ def main():
     # Create components
     backbone = create_backbone(config)
     data_module = create_data_module(config)
+    
+    # Setup logging and callbacks (do this before creating model to get clearml_logger)
+    pl_logger, clearml_logger, callbacks = setup_logging_and_callbacks(config)
+    
     model = BaselineSegmentationModule(
         backbone=backbone,
         num_classes=config.model.num_classes,
         learning_rate=config.training.learning_rate,
         loss_type=config.model.loss_type,
-        class_weights=config.model.class_weights
+        class_weights=config.model.class_weights,
+        clearml_logger=clearml_logger
     )
 
     # Setup data
     data_module.setup('fit')
     
-    # Setup logging and callbacks
-    logger, callbacks = setup_logging_and_callbacks(config)
-    
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=config.training.epochs,
-        logger=logger,
+        logger=pl_logger,
         callbacks=callbacks,
         log_every_n_steps=config.training.log_every_n_steps,
         val_check_interval=config.training.val_check_interval,

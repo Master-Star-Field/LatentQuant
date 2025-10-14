@@ -21,7 +21,7 @@ from data import OxfordPetDataModule
 from utils.initialization import initialize_codebook_from_data
 from utils.compression import measure_compression
 from configs.default import get_default_config, update_config_from_args
-from loggers import setup_clearml
+from loggers import setup_clearml, ClearMLLogger, ClearMLUploadCallback
 
 
 def create_quantizer(config):
@@ -116,35 +116,22 @@ def setup_logging_and_callbacks(config):
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
-    setup_clearml(
+    # Setup ClearML
+    clearml_task = setup_clearml(
         project_name=config.logger.project_name,
         task_name=config.logger.task_name
     )
-    logger = None
     
-    # Logger - ClearML or TensorBoard
-    # if config.logger.use_clearml:
-    #     if clearml_task:
-    #         logger = None  # ClearML handles logging automatically
-    #         print("Using ClearML for logging")
-    #     else:
-    #         logger = TensorBoardLogger(
-    #             save_dir=config.output_dir,
-    #             name=config.experiment_name,
-    #             version=None
-    #         )
-    #         print("ClearML setup failed, falling back to TensorBoard")
-    # else:
-    #     logger = TensorBoardLogger(
-    #         save_dir=config.output_dir,
-    #         name=config.experiment_name,
-    #         version=None
-    #     )
-    #     print("Using TensorBoard for logging")
+    # Create ClearML logger wrapper
+    clearml_logger = ClearMLLogger(clearml_task) if clearml_task else None
+    
+    # PyTorch Lightning logger (None for ClearML auto-logging)
+    pl_logger = None
     
     # Callbacks
+    checkpoint_dir = os.path.join(config.output_dir, config.experiment_name)
     checkpoint_callback = ModelCheckpoint(
-        dirpath=os.path.join(config.output_dir, config.experiment_name),
+        dirpath=checkpoint_dir,
         filename='{epoch:02d}-{val/loss:.2f}',
         monitor=config.training.monitor,
         mode=config.training.mode,
@@ -161,7 +148,18 @@ def setup_logging_and_callbacks(config):
     
     callbacks = [checkpoint_callback, early_stop_callback]
     
-    return logger, callbacks
+    # Add ClearML upload callback if task exists
+    if clearml_task:
+        clearml_upload_callback = ClearMLUploadCallback(
+            task=clearml_task,
+            clearml_logger=clearml_logger,
+            checkpoint_dir=checkpoint_dir,
+            embedding_dir="embeddings"
+        )
+        callbacks.append(clearml_upload_callback)
+        print("ClearML logging and upload enabled")
+    
+    return pl_logger, clearml_logger, callbacks
 
 
 def main():
@@ -263,6 +261,9 @@ def main():
     
     data_module = create_data_module(config)
     
+    # Setup logging and callbacks (do this before creating model to get clearml_logger)
+    pl_logger, clearml_logger, callbacks = setup_logging_and_callbacks(config)
+    
     model = VQSqueezeModule(
         backbone=backbone,
         quantizer=quantizer,
@@ -272,7 +273,8 @@ def main():
         loss_type=config.model.loss_type,
         class_weights=config.model.class_weights,
         add_adapter=config.model.add_adapter,
-        feature_dim=config.model.feature_dim
+        feature_dim=config.model.feature_dim,
+        clearml_logger=clearml_logger
     )
 
     # Setup data
@@ -289,14 +291,11 @@ def main():
     #         model.device,
     #         max_samples=config.max_init_samples
     #     )
-    
-    # Setup logging and callbacks
-    logger, callbacks = setup_logging_and_callbacks(config)
 
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=config.training.epochs,
-        logger=logger,
+        logger=pl_logger,
         callbacks=callbacks,
         log_every_n_steps=config.training.log_every_n_steps,
         val_check_interval=config.training.val_check_interval,
