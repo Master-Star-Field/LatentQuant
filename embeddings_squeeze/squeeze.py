@@ -116,29 +116,31 @@ def setup_logging_and_callbacks(config):
     # Create output directory
     os.makedirs(config.output_dir, exist_ok=True)
     
+    print('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    clearml_task = setup_clearml(
+        project_name=config.logger.project_name,
+        task_name=config.logger.task_name
+    )
+    
     # Logger - ClearML or TensorBoard
-    if config.logger.use_clearml:
-        clearml_task = setup_clearml(
-            project_name=config.logger.project_name,
-            task_name=config.logger.task_name
-        )
-        if clearml_task:
-            logger = None  # ClearML handles logging automatically
-            print("Using ClearML for logging")
-        else:
-            logger = TensorBoardLogger(
-                save_dir=config.output_dir,
-                name=config.experiment_name,
-                version=None
-            )
-            print("ClearML setup failed, falling back to TensorBoard")
-    else:
-        logger = TensorBoardLogger(
-            save_dir=config.output_dir,
-            name=config.experiment_name,
-            version=None
-        )
-        print("Using TensorBoard for logging")
+    # if config.logger.use_clearml:
+    #     if clearml_task:
+    #         logger = None  # ClearML handles logging automatically
+    #         print("Using ClearML for logging")
+    #     else:
+    #         logger = TensorBoardLogger(
+    #             save_dir=config.output_dir,
+    #             name=config.experiment_name,
+    #             version=None
+    #         )
+    #         print("ClearML setup failed, falling back to TensorBoard")
+    # else:
+    #     logger = TensorBoardLogger(
+    #         save_dir=config.output_dir,
+    #         name=config.experiment_name,
+    #         version=None
+    #     )
+    #     print("Using TensorBoard for logging")
     
     # Callbacks
     checkpoint_callback = ModelCheckpoint(
@@ -244,7 +246,7 @@ def main():
         args_dict['task_name'] = args_dict.get('experiment_name', 'vq_squeeze')
     
     config = update_config_from_args(config, args_dict)
-    
+
     print(f"Starting experiment: {config.experiment_name}")
     print(f"Model: {config.model.backbone}")
     print(f"Dataset: {config.data.dataset}")
@@ -291,6 +293,8 @@ def main():
     # Setup logging and callbacks
     logger, callbacks = setup_logging_and_callbacks(config)
     
+    return
+
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=config.training.epochs,
