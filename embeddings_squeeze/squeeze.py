@@ -124,9 +124,13 @@ def setup_logging_and_callbacks(config):
     
     # Create ClearML logger wrapper
     clearml_logger = ClearMLLogger(clearml_task) if clearml_task else None
-    
-    # PyTorch Lightning logger (None for ClearML auto-logging)
-    pl_logger = None
+       
+    # TensorBoard logger for ClearML auto-logging
+    pl_logger = TensorBoardLogger(
+        save_dir=config.output_dir,
+        name=config.experiment_name,
+        version=None
+    )
     
     # Callbacks
     checkpoint_dir = os.path.join(config.output_dir, config.experiment_name)
