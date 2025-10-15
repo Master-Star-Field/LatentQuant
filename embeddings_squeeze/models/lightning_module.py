@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
+import numpy as np
+import matplotlib.pyplot as plt
 from typing import Dict, Any, Optional
 from torchmetrics import JaccardIndex, Accuracy, Precision, Recall, F1Score
 
@@ -88,6 +90,10 @@ class VQSqueezeModule(pl.LightningModule):
         self.embedding_dir = "embeddings"
         os.makedirs(self.embedding_dir, exist_ok=True)
         self._first_val_batch_features = None
+        
+        # UMAP visualization storage
+        self._val_backbone_embeddings = []
+        self._val_quantized_embeddings = []
     
     def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool):
         """Setup backbone with optional adapter layers."""
@@ -138,7 +144,8 @@ class VQSqueezeModule(pl.LightningModule):
         Returns:
             output: Segmentation logits [B, num_classes, H, W]
             quant_loss: Quantization loss (0 if no quantizer)
-            features: Extracted features (before quantization)
+            original_features: Extracted features (before quantization)
+            quantized_features: Features after quantization (same as original if no quantizer)
         """
         # Extract features
         features = self.backbone.extract_features(images, detach=self.feature_adapter is not None)
@@ -152,14 +159,16 @@ class VQSqueezeModule(pl.LightningModule):
         
         # Quantize if quantizer is present
         quant_loss = torch.tensor(0.0, device=images.device)
+        quantized_features = original_features  # Default to original if no quantizer
         if self.quantizer is not None:
             features, quant_loss = self.quantizer.quantize_spatial(features)
+            quantized_features = features
         
         # Decode to segmentation logits
         output = self.backbone.classifier(features)
         output = F.interpolate(output, size=images.shape[-2:], mode='bilinear', align_corners=False)
         
-        return output, quant_loss, original_features
+        return output, quant_loss, original_features, quantized_features
     
     def _compute_loss(self, pred: torch.Tensor, target: torch.Tensor, quant_loss: torch.Tensor):
         """Compute total loss including segmentation and quantization losses."""
@@ -194,7 +203,7 @@ class VQSqueezeModule(pl.LightningModule):
         masks = masks.long()
         
         # Forward pass
-        output, quant_loss, _ = self(images)
+        output, quant_loss, _, _ = self(images)
         
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
@@ -228,7 +237,7 @@ class VQSqueezeModule(pl.LightningModule):
         masks = masks.long()
         
         # Forward pass
-        output, quant_loss, features = self(images)
+        output, quant_loss, backbone_features, quantized_features = self(images)
         
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
@@ -248,11 +257,20 @@ class VQSqueezeModule(pl.LightningModule):
         self.log('val/recall', rec, on_step=False, on_epoch=True)
         self.log('val/f1', f1, on_step=False, on_epoch=True)
         
+        # Accumulate embeddings for UMAP visualization
+        self._val_backbone_embeddings.append(backbone_features.detach().cpu())
+        self._val_quantized_embeddings.append(quantized_features.detach().cpu())
+        
         # Save only first batch features for this epoch
         if batch_idx == 0:
-            self._first_val_batch_features = features.detach().cpu()
+            self._first_val_batch_features = backbone_features.detach().cpu()
         
         return loss
+    
+    def on_validation_epoch_start(self):
+        """Clear accumulated embeddings at the start of each validation epoch."""
+        self._val_backbone_embeddings.clear()
+        self._val_quantized_embeddings.clear()
     
     def on_validation_epoch_end(self):
         """Called after validation epoch ends - log Plotly visualizations and save embeddings."""
@@ -341,6 +359,97 @@ class VQSqueezeModule(pl.LightningModule):
                 self.clearml_logger.report_text(
                     f"Plotly reporting failed at epoch {self.current_epoch}: {e}"
                 )
+        
+        # Generate UMAP visualizations on even epochs
+        if self.current_epoch % 2 == 0:
+            try:
+                import umap.umap_ as umap_module
+                
+                # Only proceed if we have embeddings
+                if len(self._val_backbone_embeddings) > 0 and len(self._val_quantized_embeddings) > 0:
+                    # Concatenate all accumulated embeddings
+                    backbone_emb_flat = torch.cat(self._val_backbone_embeddings, dim=0)
+                    quantized_emb_flat = torch.cat(self._val_quantized_embeddings, dim=0)
+                    
+                    # Flatten spatial dimensions: [B, C, H, W] -> [B*H*W, C]
+                    backbone_emb_flat = backbone_emb_flat.permute(0, 2, 3, 1).reshape(-1, backbone_emb_flat.shape[1])
+                    quantized_emb_flat = quantized_emb_flat.permute(0, 2, 3, 1).reshape(-1, quantized_emb_flat.shape[1])
+                    
+                    # Convert to numpy
+                    backbone_emb_np = backbone_emb_flat.numpy()
+                    quantized_emb_np = quantized_emb_flat.numpy()
+                    
+                    # Limit samples for performance (take subset if too large)
+                    max_samples = 10000
+                    if len(backbone_emb_np) > max_samples:
+                        indices = np.random.choice(len(backbone_emb_np), max_samples, replace=False)
+                        backbone_emb_np = backbone_emb_np[indices]
+                        quantized_emb_np = quantized_emb_np[indices]
+                    
+                    # Generate 2D UMAP
+                    fig_2d, axs_2d = plt.subplots(1, 2, figsize=(12, 6))
+                    
+                    proj_2d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(backbone_emb_np)
+                    axs_2d[0].scatter(proj_2d_backbone[:, 0], proj_2d_backbone[:, 1], alpha=0.3)
+                    axs_2d[0].set_title('2D UMAP: Backbone Embeddings')
+                    
+                    proj_2d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(quantized_emb_np)
+                    axs_2d[1].scatter(proj_2d_quantized[:, 0], proj_2d_quantized[:, 1], alpha=0.3)
+                    axs_2d[1].set_title('2D UMAP: Quantized Embeddings')
+                    
+                    # Convert 2D plot to image and log
+                    fig_2d.canvas.draw()
+                    img_2d = np.frombuffer(fig_2d.canvas.tostring_rgb(), dtype=np.uint8)
+                    img_2d = img_2d.reshape(fig_2d.canvas.get_width_height()[::-1] + (3,))
+                    plt.close(fig_2d)
+                    
+                    if self.clearml_logger:
+                        self.clearml_logger.log_image(
+                            "umap_visualizations", 
+                            f"2d_embeddings_epoch_{self.current_epoch}", 
+                            img_2d, 
+                            iteration=self.current_epoch
+                        )
+                    
+                    # Generate 3D UMAP
+                    fig_3d = plt.figure(figsize=(12, 6))
+                    ax1 = fig_3d.add_subplot(121, projection='3d')
+                    ax2 = fig_3d.add_subplot(122, projection='3d')
+                    
+                    proj_3d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(backbone_emb_np)
+                    ax1.scatter(proj_3d_backbone[:, 0], proj_3d_backbone[:, 1], proj_3d_backbone[:, 2], alpha=0.3)
+                    ax1.set_title('3D UMAP: Backbone Embeddings')
+                    
+                    proj_3d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(quantized_emb_np)
+                    ax2.scatter(proj_3d_quantized[:, 0], proj_3d_quantized[:, 1], proj_3d_quantized[:, 2], alpha=0.3)
+                    ax2.set_title('3D UMAP: Quantized Embeddings')
+                    
+                    # Convert 3D plot to image and log
+                    fig_3d.canvas.draw()
+                    img_3d = np.frombuffer(fig_3d.canvas.tostring_rgb(), dtype=np.uint8)
+                    img_3d = img_3d.reshape(fig_3d.canvas.get_width_height()[::-1] + (3,))
+                    plt.close(fig_3d)
+                    
+                    if self.clearml_logger:
+                        self.clearml_logger.log_image(
+                            "umap_visualizations", 
+                            f"3d_embeddings_epoch_{self.current_epoch}", 
+                            img_3d, 
+                            iteration=self.current_epoch
+                        )
+                
+                # Clear accumulated embeddings after logging
+                self._val_backbone_embeddings.clear()
+                self._val_quantized_embeddings.clear()
+                
+            except Exception as e:
+                if self.clearml_logger:
+                    self.clearml_logger.report_text(
+                        f"UMAP visualization failed at epoch {self.current_epoch}: {e}"
+                    )
+                # Clear embeddings even if visualization failed
+                self._val_backbone_embeddings.clear()
+                self._val_quantized_embeddings.clear()
         
         # Save per-epoch embedding (first validation batch only)
         try:
