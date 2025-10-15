@@ -20,24 +20,33 @@ class BaseQuantizer(nn.Module):
 
     def quantize_spatial(self, features: torch.Tensor):
         """
-        Quantize spatial features [B, C, H, W]
+        Quantize spatial features [B, C, H, W] or [B, N, C] for point clouds
         
         Args:
-            features: Tensor of shape [B, C, H, W]
+            features: Tensor of shape [B, C, H, W] or [B, N, C]
         
         Returns:
-            quantized: Quantized features [B, C, H, W]
+            quantized: Quantized features [B, C, H, W] or [B, N, C]
             loss: Quantization loss (scalar)
         """
-        B, C, H, W = features.shape
-        # Transform [B, C, H, W] -> [B, H*W, C]
-        seq = features.permute(0, 2, 3, 1).reshape(B, H * W, C)
-        
-        # Quantize
-        quantized, indices, loss = self.forward(seq)
-        
-        # Transform back [B, H*W, C] -> [B, C, H, W]
-        quantized = quantized.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        if features.dim() == 4:
+            # 2D case: [B, C, H, W]
+            B, C, H, W = features.shape
+            # Transform [B, C, H, W] -> [B, H*W, C]
+            seq = features.permute(0, 2, 3, 1).reshape(B, H * W, C)
+            
+            # Quantize
+            quantized, indices, loss = self.forward(seq)
+            
+            # Transform back [B, H*W, C] -> [B, C, H, W]
+            quantized = quantized.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        elif features.dim() == 3:
+            # 3D case: [B, N, C] for point clouds
+            B, N, C = features.shape
+            # Quantize directly
+            quantized, indices, loss = self.forward(features)
+        else:
+            raise ValueError(f"Unsupported feature dimension: {features.dim()}")
         
         # Handle loss (may be tensor with multiple elements)
         if isinstance(loss, torch.Tensor) and loss.numel() > 1:

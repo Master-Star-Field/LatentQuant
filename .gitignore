@@ -5,3 +5,22 @@ venv/
 
 data/
 outputs/
+Stanford3dDataset_v1.2.zip/
+Stanford3dDataset_v1.2/
+Stanford3dDataset_v1.2_preprocess/
+checkpoints_vqseg/
+embeddings/
+info/
+logs/
+
+*.zip
+*.aria2
+*.pt
+*.pkl
+*.npy
+
+# Temporary files
+.DS_Store
+*.tmp
+*.temp
+

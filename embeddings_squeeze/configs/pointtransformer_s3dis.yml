@@ -1,0 +1,36 @@
+dataset:
+  name: Stanford3dDataset_v1.2
+  path: /Users/torum/vscode/LatentQuant/Stanford3dDataset_v1.2
+  use_cache: true
+  test_area: 5
+model:
+  name: RandLANet
+  batcher: DefaultBatcher
+  ckpt_path: # path/to/your/checkpoint
+  num_classes: 19
+  ignored_label_inds: [0]
+  in_channels: 6  # 3 for coordinates + 3 for colors
+  dim_features: 32
+  dim_output: [64, 128, 256, 512]
+  num_points: 120000
+  grid_size: 0.06
+  augment:
+    recenter:
+      dim: [0, 1]
+pipeline:
+  name: SemanticSegmentation
+  optimizer:
+    lr: 0.001
+  batch_size: 4
+  main_log_dir: ./logs
+  max_epoch: 100
+  save_ckpt_freq: 5
+  scheduler_gamma: 0.9886
+  test_batch_size: 1
+  train_sum_dir: train_log
+  val_batch_size: 2
+  summary:
+    record_for: []
+    max_pts:
+    use_reference: false
+    max_outputs: 1

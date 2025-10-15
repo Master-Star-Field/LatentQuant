@@ -151,13 +151,28 @@ class VQSqueezeModule(pl.LightningModule):
         original_features = features
         
         # Quantize if quantizer is present
-        quant_loss = torch.tensor(0.0, device=images.device)
+        # Get device from the first tensor in images dict
+        if isinstance(images, dict):
+            first_tensor = next(iter(images.values()))
+            if isinstance(first_tensor, torch.Tensor):
+                device = first_tensor.device
+            else:
+                device = torch.device('cpu')
+        else:
+            device = images.device
+        quant_loss = torch.tensor(0.0, device=device)
         if self.quantizer is not None:
             features, quant_loss = self.quantizer.quantize_spatial(features)
         
         # Decode to segmentation logits
-        output = self.backbone.classifier(features)
-        output = F.interpolate(output, size=images.shape[-2:], mode='bilinear', align_corners=False)
+        if hasattr(self.backbone, 'classifier'):
+            output = self.backbone.classifier(features)
+            output = F.interpolate(output, size=images.shape[-2:], mode='bilinear', align_corners=False)
+        else:
+            # For ML3D backbones, use the forward method directly
+            output = self.backbone(images)
+            if isinstance(output, dict):
+                output = output.get("out", output.get("logits", features))
         
         return output, quant_loss, original_features
     
@@ -171,6 +186,17 @@ class VQSqueezeModule(pl.LightningModule):
             self.log('loss/dice', dice, on_step=False, on_epoch=True)
             self.log('loss/focal', focal, on_step=False, on_epoch=True)
         else:
+            # Reshape for loss computation
+            if pred.dim() == 4:  # [B, C, H, W]
+                pred = pred.permute(0, 2, 3, 1).contiguous().view(-1, pred.size(1))
+                target = target.view(-1)
+            elif pred.dim() == 3:  # [B, N, C] for point clouds
+                pred = pred.view(-1, pred.size(-1))  # [B*N, C]
+                target = target.view(-1)  # [B*N]
+            elif pred.dim() == 2:  # [B, C] - already flattened
+                pred = pred.view(-1, pred.size(-1))
+                target = target.view(-1)
+            
             seg_loss = self.criterion(pred, target)
         
         # Add quantization loss if present
@@ -186,7 +212,20 @@ class VQSqueezeModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """Training step."""
-        images, masks = batch
+        # Handle different batch formats
+        if isinstance(batch, dict):
+            # S3DIS format: {'point': ..., 'color': ..., 'label': ...}
+            if 'point' in batch and 'label' in batch:
+                # Keep the full dict for ML3D backbones
+                images = {'point': batch['point'], 'color': batch['color']}
+                masks = batch['label']   # segmentation labels
+            else:
+                # Other dict formats
+                images = batch.get('image', batch.get('data', batch.get('input')))
+                masks = batch.get('mask', batch.get('label', batch.get('target')))
+        else:
+            # Tuple format: (images, masks)
+            images, masks = batch
         
         # Handle mask dimensions
         if masks.dim() == 4:
@@ -199,12 +238,19 @@ class VQSqueezeModule(pl.LightningModule):
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
         
-        # Compute metrics
-        iou = self.train_iou(output, masks)
-        acc = self.train_acc(output, masks)
-        prec = self.train_prec(output, masks)
-        rec = self.train_rec(output, masks)
-        f1 = self.train_f1(output, masks)
+        # Compute metrics - reshape for point cloud data
+        if output.dim() == 3:  # [B, N, C] for point clouds
+            output_flat = output.view(-1, output.size(-1))  # [B*N, C]
+            masks_flat = masks.view(-1)  # [B*N]
+        else:
+            output_flat = output
+            masks_flat = masks
+            
+        iou = self.train_iou(output_flat, masks_flat)
+        acc = self.train_acc(output_flat, masks_flat)
+        prec = self.train_prec(output_flat, masks_flat)
+        rec = self.train_rec(output_flat, masks_flat)
+        f1 = self.train_f1(output_flat, masks_flat)
         
         # Log metrics
         self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -217,40 +263,152 @@ class VQSqueezeModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        """Validation step."""
-        images, masks = batch
-        
-        # Handle mask dimensions
-        if masks.dim() == 4:
-            masks = masks.squeeze(1)
-        masks = masks.long()
-        
-        # Forward pass
-        output, quant_loss, features = self(images)
-        
-        # Compute loss
-        loss = self._compute_loss(output, masks, quant_loss)
-        
-        # Compute metrics
-        iou = self.val_iou(output, masks)
-        acc = self.val_acc(output, masks)
-        prec = self.val_prec(output, masks)
-        rec = self.val_rec(output, masks)
-        f1 = self.val_f1(output, masks)
-        
-        # Log metrics
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val/precision', prec, on_step=False, on_epoch=True)
-        self.log('val/recall', rec, on_step=False, on_epoch=True)
-        self.log('val/f1', f1, on_step=False, on_epoch=True)
-        
-        # Save only first batch features for this epoch
+        print("STEP")
+        """
+        Универсальная валидация:
+        - Images: (images, masks) или {'image':..., 'mask':...}
+        - S3DIS:  {'point':[B,N,3], 'color':[B,N,3], 'label':[B,N]}
+        Ожидаемый forward:
+        self(...) -> либо (logits, vq_loss[, features]), либо {'out', 'vq_loss'[, 'features']}
+        """
+
+        # ---------- 1) Распаковка входа и GT ----------
+        if isinstance(batch, tuple) or isinstance(batch, list):
+            # классический image case: (images, masks)
+            images, masks = batch
+            labels = masks
+            # приведение mask к [B,H,W]
+            if labels.dim() == 4 and labels.size(1) == 1:
+                labels = labels.squeeze(1)
+            labels = labels.long()
+            fwd_input = images
+        elif isinstance(batch, dict):
+            if "label" in batch and ("point" in batch or "color" in batch):
+                # S3DIS point-cloud case
+                labels = batch["label"].long()            # [B,N]
+                # Keep only point and color for ML3D backbones
+                fwd_input = {'point': batch['point'], 'color': batch['color']}
+            elif "mask" in batch:
+                # возможно dict для картинок
+                labels = batch["mask"].long()
+                if labels.dim() == 4 and labels.size(1) == 1:
+                    labels = labels.squeeze(1)
+                fwd_input = batch.get("image", batch)      # поддержка {'image','mask'} или совместимость
+            else:
+                raise RuntimeError("Unknown batch format for validation_step(dict).")
+        else:
+            raise RuntimeError(f"Unsupported batch type: {type(batch)}")
+
+        B = labels.size(0)
+
+        # ---------- 2) Forward ----------
+        out = self(fwd_input)
+        features = None
+        quant_loss = torch.tensor(0.0, device=labels.device)
+
+        if isinstance(out, dict):
+            raw_logits = out.get("out")
+            quant_loss = out.get("vq_loss", quant_loss)
+            features   = out.get("features", None)
+        else:
+            if not isinstance(out, (tuple, list)):
+                raw_logits = out
+            elif len(out) == 2:
+                raw_logits, quant_loss = out
+            else:
+                raw_logits, quant_loss, features = out
+
+        if not isinstance(raw_logits, torch.Tensor):
+            raise RuntimeError("Model forward must return logits tensor (or dict with key 'out').")
+
+        # ---------- 3) Loss (используем «сырые» формы, как в твоём _compute_loss) ----------
+        loss = self._compute_loss(raw_logits, labels, quant_loss)
+
+        # ---------- 4) Приводим logits для метрик к [B, M, K] ----------
+        logits = raw_logits
+        # если logits channel-first (класс в dim=1), перенесём класс в конец
+        num_classes = getattr(self, "num_classes", None) or getattr(self.hparams, "num_classes", None)
+        if logits.dim() >= 3:
+            if num_classes is not None and logits.size(-1) == num_classes:
+                pass  # уже класс-канал последний
+            elif num_classes is not None and logits.size(1) == num_classes:
+                logits = logits.movedim(1, -1)  # [B, ..., K]
+            else:
+                # эвристика: если второй dim маленький (<=256) и остальное «пространство», считаем что это K
+                if logits.size(1) <= 256 and (logits.dim() > 3 or logits.size(-1) > logits.size(1)):
+                    logits = logits.movedim(1, -1)
+                # иначе предполагаем, что класс уже последний
+
+        # теперь приведём к [B, M, K]
+        if logits.dim() == 3:
+            # уже [B, *, K]
+            M, K = logits.size(1), logits.size(2)
+            flat_logits = logits
+            flat_labels = labels
+            # для картинок labels могут быть [B,H,W] — расплющим
+            if labels.dim() == 3:
+                flat_labels = labels.view(B, -1)
+                flat_logits = logits.view(B, -1, K)
+        elif logits.dim() >= 4:
+            # [B, C?, H, W] или [B, H, W, K] или 3D-варианты — расплющим всё, кроме B и K
+            K = logits.size(-1)
+            flat_logits = logits.view(B, -1, K)
+            flat_labels = labels.view(B, -1)
+        else:
+            raise RuntimeError(f"Unexpected logits shape: {tuple(logits.shape)}")
+
+        # ---------- 5) Метрики на валидных позициях ----------
+        ignore_index = getattr(self, "ignore_index", -100)
+        valid = flat_labels.ne(ignore_index) if flat_labels.dim() == 2 else torch.ones_like(flat_labels, dtype=torch.bool)
+
+        with torch.no_grad():
+            pred = flat_logits.argmax(dim=-1)  # [B,M]
+            if valid.any():
+                acc = (pred[valid] == flat_labels[valid]).float().mean()
+            else:
+                acc = torch.tensor(0.0, device=flat_logits.device)
+
+            # IoU / Precision / Recall / F1 (macro)
+            K = flat_logits.size(-1)
+            ious, precs, recs, f1s = [], [], [], []
+            for c in range(K):
+                p_c = (pred == c) & valid
+                t_c = (flat_labels == c) & valid
+                inter = (p_c & t_c).sum().float()
+                union = p_c.sum().float() + t_c.sum().float() - inter
+                if union > 0:
+                    ious.append(inter / union)
+
+                tp = inter
+                fp = (p_c & (~t_c)).sum().float()
+                fn = ((~p_c) & t_c).sum().float()
+                prec_c = tp / (tp + fp) if (tp + fp) > 0 else None
+                rec_c  = tp / (tp + fn) if (tp + fn) > 0 else None
+                if prec_c is not None and rec_c is not None and (prec_c + rec_c) > 0:
+                    f1_c = 2 * (prec_c * rec_c) / (prec_c + rec_c)
+                    precs.append(prec_c); recs.append(rec_c); f1s.append(f1_c)
+
+            iou = (torch.stack(ious).mean() if ious else torch.tensor(0.0, device=flat_logits.device))
+            precision = (torch.stack(precs).mean() if precs else torch.tensor(0.0, device=flat_logits.device))
+            recall    = (torch.stack(recs).mean()  if recs  else torch.tensor(0.0, device=flat_logits.device))
+            f1        = (torch.stack(f1s).mean()   if f1s   else torch.tensor(0.0, device=flat_logits.device))
+
+        # ---------- 6) Логгинг ----------
+        self.log('val/loss',      loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val/iou',       iou,  on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val/acc',       acc,  on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val/precision', precision, on_step=False, on_epoch=True)
+        self.log('val/recall',    recall,    on_step=False, on_epoch=True)
+        self.log('val/f1',        f1,        on_step=False, on_epoch=True)
+
+        # ---------- 7) Сохранить features с первого батча (если есть) ----------
         if batch_idx == 0:
-            self._first_val_batch_features = features.detach().cpu()
-        
+            to_store = features if features is not None else flat_logits.detach()
+            self._first_val_batch_features = to_store.detach().cpu()
+
         return loss
+
+
     
     def on_validation_epoch_end(self):
         """Called after validation epoch ends - log Plotly visualizations and save embeddings."""

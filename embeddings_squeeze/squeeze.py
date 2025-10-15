@@ -14,10 +14,10 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
-from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone
+from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone, ML3DSegmentationBackbone
 from models.lightning_module import VQSqueezeModule
 from models.quantizers import VQWithProjection, FSQWithProjection, LFQWithProjection, ResidualVQWithProjection
-from data import OxfordPetDataModule
+from data import OxfordPetDataModule, S3DISDataModule
 from utils.initialization import initialize_codebook_from_data
 from utils.compression import measure_compression
 from configs.default import get_default_config, update_config_from_args
@@ -27,6 +27,10 @@ from loggers import setup_clearml, ClearMLLogger, ClearMLUploadCallback
 def create_quantizer(config):
     """Create quantizer based on config."""
     if not config.quantizer.enabled:
+        return None
+    
+    # Skip quantizer for ML3D models due to dimension mismatch
+    if config.model.backbone == "ml3d":
         return None
     
     qtype = config.quantizer.type.lower()
@@ -88,6 +92,22 @@ def create_backbone(config):
             num_classes=config.model.num_classes,
             freeze_backbone=config.model.freeze_backbone
         )
+    elif config.model.backbone.lower() == "ml3d":
+        # ML3D uses dynamic feature_dim, detect if needed
+        if config.model.feature_dim is None or config.model.feature_dim < 1:
+            config.model.feature_dim = -1  # let the backbone infer it
+        config_path = getattr(config.model, "config_path", None)
+        if config_path is None:
+            config_path = "embeddings_squeeze/configs/pointtransformer_s3dis.yml"
+        
+        backbone = ML3DSegmentationBackbone(
+            num_classes=config.model.num_classes,
+            in_channels=getattr(config.model, "in_channels", 6),  # S3DIS uses points + colors
+            config_path=config_path,
+            backbone_config=getattr(config.model, "ml3d_backbone_config", None),
+            pretrained=getattr(config.model, "pretrained", False),
+            freeze_backbone=getattr(config.model, "freeze_backbone", True)
+        )
     else:
         raise ValueError(f"Unknown backbone: {config.model.backbone}")
     
@@ -104,6 +124,19 @@ def create_data_module(config):
             pin_memory=config.training.pin_memory,
             image_size=config.data.image_size,
             subset_size=config.data.subset_size
+        )
+    elif config.data.dataset.lower() == "s3dis":
+        # Set num_classes to 19 for S3DIS
+        config.model.num_classes = 19
+        data_module = S3DISDataModule(
+            data_path=config.data.data_path,
+            batch_size=config.training.batch_size,
+            num_workers=0,  # Disable multiprocessing to avoid NumPy issues
+            pin_memory=False,  # Disable pin_memory for CPU
+            test_area=getattr(config.data, "test_area", "Area_5"),
+            max_points=getattr(config.data, "max_points", 10_000),  # Reduce points for memory efficiency
+            color_norm=getattr(config.data, "color_norm", True),
+            map_unknown_to_clutter=getattr(config.data, "map_unknown_to_clutter", True)
         )
     else:
         raise ValueError(f"Unknown dataset: {config.data.dataset}")
@@ -166,13 +199,14 @@ def setup_logging_and_callbacks(config):
     return pl_logger, clearml_logger, callbacks
 
 
+
 def main():
     """Main training function."""
     parser = argparse.ArgumentParser(description="VQ Compression Training")
     
     # Model arguments
     parser.add_argument("--model", type=str, default="vit", 
-                       choices=["vit", "deeplab"], help="Backbone model")
+                       choices=["vit", "deeplab", "ml3d"], help="Backbone model")
     parser.add_argument("--num_classes", type=int, default=21,
                        help="Number of classes")
     parser.add_argument("--add_adapter", action="store_true",
@@ -181,6 +215,8 @@ def main():
                        help="Feature dimension (auto-detected if not set)")
     parser.add_argument("--loss_type", type=str, default="ce",
                        choices=["ce", "dice", "focal", "combined"], help="Loss function type")
+    parser.add_argument("--config_path", type=str, default="ce",
+                       help="Config path")
     
     # Quantizer arguments
     parser.add_argument("--quantizer_type", type=str, default="vq",
@@ -213,7 +249,7 @@ def main():
     
     # Data arguments
     parser.add_argument("--dataset", type=str, default="oxford_pet",
-                       choices=["oxford_pet"], help="Dataset name")
+                       choices=["oxford_pet", "s3dis"], help="Dataset name")
     parser.add_argument("--data_path", type=str, default="./data",
                        help="Path to dataset")
     parser.add_argument("--subset_size", type=int, default=None,
@@ -231,6 +267,16 @@ def main():
                        help="Initialize codebook with k-means")
     parser.add_argument("--max_init_samples", type=int, default=50000,
                        help="Max samples for codebook initialization")
+                       
+    # ML3D backbone arguments
+    parser.add_argument("--ml3d_config_path", type=str, default=None,
+                       help="Path to ML3D model config file (YAML)")
+    parser.add_argument("--ml3d_backbone_name", type=str, default=None,
+                       help="Name of ML3D backbone class (e.g. 'RandLA-Net')")
+    parser.add_argument("--ml3d_pretrained", action="store_true", default=False,
+                       help="Use pretrained weights for ML3D backbone if available")
+    parser.add_argument("--ml3d_freeze_backbone", action="store_true", default=False,
+                       help="Freeze ML3D backbone parameters during training")
     
     args = parser.parse_args()
     
@@ -303,8 +349,10 @@ def main():
         callbacks=callbacks,
         log_every_n_steps=config.training.log_every_n_steps,
         val_check_interval=config.training.val_check_interval,
-        accelerator='auto', devices='auto',
-        precision=16 if torch.cuda.is_available() else 32,
+        accelerator='cpu', devices=1,  # Force CPU to avoid MPS issues
+        precision=32,
+        fast_dev_run=False,  # Set to True for quick testing
+        num_sanity_val_steps=0  # Skip sanity check to avoid multiprocessing issues
     )
     
     # Train

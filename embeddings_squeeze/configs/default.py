@@ -43,7 +43,7 @@ class LoggerConfig:
 @dataclass
 class ModelConfig:
     """Model architecture configuration."""
-    backbone: str = "vit"  # "vit" or "deeplab"
+    backbone: str = "vit"  # "vit", "deeplab", or "ml3d"
     num_classes: int = 21
     freeze_backbone: bool = True
     
@@ -52,6 +52,12 @@ class ModelConfig:
     
     # DeepLab specific  
     deeplab_weights: str = "COCO_WITH_VOC_LABELS_V1"
+    
+    # ML3D specific
+    config_path: Optional[str] = None
+    in_channels: int = 3
+    ml3d_backbone_config: Optional[dict] = None
+    pretrained: bool = False
     
     # Adapter configuration
     add_adapter: bool = False
@@ -148,6 +154,16 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
         config.model.loss_type = args["loss_type"]
     if "class_weights" in args:
         config.model.class_weights = args["class_weights"]
+    if "config_path" in args:
+        config.model.config_path = args["config_path"]
+    if "ml3d_config_path" in args:
+        config.model.config_path = args["ml3d_config_path"]
+    if "ml3d_backbone_name" in args:
+        config.model.ml3d_backbone_config = {"name": args["ml3d_backbone_name"]}
+    if "ml3d_pretrained" in args:
+        config.model.pretrained = args["ml3d_pretrained"]
+    if "ml3d_freeze_backbone" in args:
+        config.model.freeze_backbone = args["ml3d_freeze_backbone"]
     
     # Quantizer config
     if "quantizer_type" in args:
