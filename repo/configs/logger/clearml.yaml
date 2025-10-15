@@ -1,0 +1,5 @@
+_target_: pytorch_lightning.loggers.ClearMLLogger  # Класс логгера
+project_name: "embedding_test"  # 
+task_name: "cifar10-resnet-training"  # Название задачи
+tags: ["resnet", "cifar10"]  # Теги
+save_dir: "clearml_logs"  # Локальная директория

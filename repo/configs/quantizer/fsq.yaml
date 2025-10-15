@@ -1,0 +1,7 @@
+# Finite Scalar Quantization (FSQ)
+# ~10 bits per vector (8*5*5*5 = 1000 codes)
+
+enabled: true
+type: fsq
+levels: [8, 5, 5, 5]  # Уровни квантизации для каждого измерения
+

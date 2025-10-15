@@ -1,0 +1,14 @@
+defaults:
+  - dataset: oxford_pet
+  - model: deeplabv3
+  - quantizer: rvq
+  - trainer: default
+  - logger: clearml
+  - _self_
+
+# Общие настройки проекта
+project_name: "embedding_test"
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

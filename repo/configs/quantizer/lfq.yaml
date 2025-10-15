@@ -1,0 +1,10 @@
+# Lookup-Free Quantization (LFQ)
+# ~9 bits per vector
+
+enabled: true
+type: lfq
+codebook_size: 512  # 2^9 = 512 codes
+entropy_loss_weight: 0.1  # Вес энтропийного loss
+diversity_gamma: 0.1  # Коэффициент разнообразия
+spherical: false  # Сферическая квантизация
+

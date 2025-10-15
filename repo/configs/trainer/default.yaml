@@ -1,0 +1,3 @@
+max_epochs: 5
+accelerator: gpu  # Или cpu
+devices: 1

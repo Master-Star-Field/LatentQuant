@@ -1,0 +1,4 @@
+data_dir: ./data
+batch_size: 16 
+num_workers: 0
+image_size: 256

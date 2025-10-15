@@ -1,0 +1,11 @@
+# Residual Vector Quantization (RVQ)
+# 32 bits per vector (4 quantizers * 8 bits each)
+
+enabled: true
+type: rvq
+num_quantizers: 4  # Количество уровней
+codebook_size: 256  # 2^8 = 256 codes per level
+bottleneck_dim: 64
+decay: 0.99
+commitment_weight: 0.25
+

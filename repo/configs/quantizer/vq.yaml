@@ -1,0 +1,10 @@
+# Vector Quantization (VQ-VAE)
+# ~9 bits per vector
+
+enabled: true
+type: vq
+codebook_size: 512  # 2^9 = 512 codes
+bottleneck_dim: 64
+decay: 0.99  # EMA decay для codebook
+commitment_weight: 0.25  # Вес commitment loss
+

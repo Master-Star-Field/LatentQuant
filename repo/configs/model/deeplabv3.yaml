@@ -1,0 +1,10 @@
+lr: 0.001
+num_classes: 3  # Background, Pet, Border
+pretrained: true
+add_adapter: true
+feature_dim: 2048
+
+# Loss configuration
+loss_type: combined  # ce, dice, focal, combined
+class_weights: [0.5, 1.5, 3.0]  # [background, pet, border] - больше вес для редких классов
+

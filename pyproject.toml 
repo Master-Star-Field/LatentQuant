@@ -1,0 +1,13 @@
+# pyproject.toml (минимальный для setuptools)
+[build-system]
+requires = ["setuptools>=64", "wheel"]  # Требуемые зависимости для сборки
+build-backend = "setuptools.build_meta"  # Используем setuptools как backend
+
+[project]  # Опционально: метаданные проекта (для pip)
+name = "repo"
+version = "0.1"
+description = "My ML Project"
+authors = [{name = "Your Name", email = "your@email.com"}]
+
+[tool.setuptools]
+packages = ["repo", "repo.src", "repo.src.data", "repo.src.models"]  # Явно укажите пакеты (если нужно)
