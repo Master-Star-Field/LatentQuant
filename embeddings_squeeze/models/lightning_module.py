@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
-import matplotlib.pyplot as plt
 from typing import Dict, Any, Optional
 from torchmetrics import JaccardIndex, Accuracy, Precision, Recall, F1Score
 
@@ -364,6 +363,8 @@ class VQSqueezeModule(pl.LightningModule):
         if self.current_epoch % 2 == 0:
             try:
                 import umap.umap_ as umap_module
+                import plotly.graph_objects as go
+                from plotly.subplots import make_subplots
                 
                 # Only proceed if we have embeddings
                 if len(self._val_backbone_embeddings) > 0 and len(self._val_quantized_embeddings) > 0:
@@ -386,56 +387,99 @@ class VQSqueezeModule(pl.LightningModule):
                         backbone_emb_np = backbone_emb_np[indices]
                         quantized_emb_np = quantized_emb_np[indices]
                     
-                    # Generate 2D UMAP
-                    fig_2d, axs_2d = plt.subplots(1, 2, figsize=(12, 6))
-                    
+                    # Generate 2D UMAP projections
                     proj_2d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(backbone_emb_np)
-                    axs_2d[0].scatter(proj_2d_backbone[:, 0], proj_2d_backbone[:, 1], alpha=0.3)
-                    axs_2d[0].set_title('2D UMAP: Backbone Embeddings')
-                    
                     proj_2d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(quantized_emb_np)
-                    axs_2d[1].scatter(proj_2d_quantized[:, 0], proj_2d_quantized[:, 1], alpha=0.3)
-                    axs_2d[1].set_title('2D UMAP: Quantized Embeddings')
                     
-                    # Convert 2D plot to image and log
-                    fig_2d.canvas.draw()
-                    img_2d = np.frombuffer(fig_2d.canvas.tostring_rgb(), dtype=np.uint8)
-                    img_2d = img_2d.reshape(fig_2d.canvas.get_width_height()[::-1] + (3,))
-                    plt.close(fig_2d)
+                    # Create 2D Plotly figure with subplots
+                    fig_2d = make_subplots(
+                        rows=1, cols=2,
+                        subplot_titles=('2D UMAP: Backbone Embeddings', '2D UMAP: Quantized Embeddings')
+                    )
+                    
+                    fig_2d.add_trace(
+                        go.Scatter(
+                            x=proj_2d_backbone[:, 0], 
+                            y=proj_2d_backbone[:, 1],
+                            mode='markers',
+                            marker=dict(opacity=0.3, size=3),
+                            name='Backbone'
+                        ),
+                        row=1, col=1
+                    )
+                    
+                    fig_2d.add_trace(
+                        go.Scatter(
+                            x=proj_2d_quantized[:, 0],
+                            y=proj_2d_quantized[:, 1],
+                            mode='markers',
+                            marker=dict(opacity=0.3, size=3),
+                            name='Quantized'
+                        ),
+                        row=1, col=2
+                    )
+                    
+                    fig_2d.update_layout(
+                        title_text=f"2D UMAP Embeddings (Epoch {self.current_epoch})",
+                        showlegend=False,
+                        height=500
+                    )
                     
                     if self.clearml_logger:
-                        self.clearml_logger.log_image(
-                            "umap_visualizations", 
-                            f"2d_embeddings_epoch_{self.current_epoch}", 
-                            img_2d, 
-                            iteration=self.current_epoch
+                        self.clearml_logger.report_plotly(
+                            title="UMAP_2D",
+                            series=f"epoch_{self.current_epoch}",
+                            iteration=self.current_epoch,
+                            figure=fig_2d
                         )
                     
-                    # Generate 3D UMAP
-                    fig_3d = plt.figure(figsize=(12, 6))
-                    ax1 = fig_3d.add_subplot(121, projection='3d')
-                    ax2 = fig_3d.add_subplot(122, projection='3d')
-                    
+                    # Generate 3D UMAP projections
                     proj_3d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(backbone_emb_np)
-                    ax1.scatter(proj_3d_backbone[:, 0], proj_3d_backbone[:, 1], proj_3d_backbone[:, 2], alpha=0.3)
-                    ax1.set_title('3D UMAP: Backbone Embeddings')
-                    
                     proj_3d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(quantized_emb_np)
-                    ax2.scatter(proj_3d_quantized[:, 0], proj_3d_quantized[:, 1], proj_3d_quantized[:, 2], alpha=0.3)
-                    ax2.set_title('3D UMAP: Quantized Embeddings')
                     
-                    # Convert 3D plot to image and log
-                    fig_3d.canvas.draw()
-                    img_3d = np.frombuffer(fig_3d.canvas.tostring_rgb(), dtype=np.uint8)
-                    img_3d = img_3d.reshape(fig_3d.canvas.get_width_height()[::-1] + (3,))
-                    plt.close(fig_3d)
+                    # Create 3D Plotly figure with subplots
+                    fig_3d = make_subplots(
+                        rows=1, cols=2,
+                        subplot_titles=('3D UMAP: Backbone Embeddings', '3D UMAP: Quantized Embeddings'),
+                        specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]]
+                    )
+                    
+                    fig_3d.add_trace(
+                        go.Scatter3d(
+                            x=proj_3d_backbone[:, 0],
+                            y=proj_3d_backbone[:, 1],
+                            z=proj_3d_backbone[:, 2],
+                            mode='markers',
+                            marker=dict(opacity=0.3, size=2),
+                            name='Backbone'
+                        ),
+                        row=1, col=1
+                    )
+                    
+                    fig_3d.add_trace(
+                        go.Scatter3d(
+                            x=proj_3d_quantized[:, 0],
+                            y=proj_3d_quantized[:, 1],
+                            z=proj_3d_quantized[:, 2],
+                            mode='markers',
+                            marker=dict(opacity=0.3, size=2),
+                            name='Quantized'
+                        ),
+                        row=1, col=2
+                    )
+                    
+                    fig_3d.update_layout(
+                        title_text=f"3D UMAP Embeddings (Epoch {self.current_epoch})",
+                        showlegend=False,
+                        height=500
+                    )
                     
                     if self.clearml_logger:
-                        self.clearml_logger.log_image(
-                            "umap_visualizations", 
-                            f"3d_embeddings_epoch_{self.current_epoch}", 
-                            img_3d, 
-                            iteration=self.current_epoch
+                        self.clearml_logger.report_plotly(
+                            title="UMAP_3D",
+                            series=f"epoch_{self.current_epoch}",
+                            iteration=self.current_epoch,
+                            figure=fig_3d
                         )
                 
                 # Clear accumulated embeddings after logging
