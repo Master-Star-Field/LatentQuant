@@ -207,7 +207,9 @@ class VQSqueezeModule(pl.LightningModule):
         f1 = self.train_f1(output, masks)
         
         # Log metrics
-        self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log('train_step/loss', loss, on_step=True, on_epoch=False, prog_bar=False)
+
+        self.log('train/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/precision', prec, on_step=False, on_epoch=True)

@@ -103,7 +103,10 @@ class BaselineSegmentationModule(pl.LightningModule):
         f1 = self.train_f1(output, masks)
         
         # Log metrics
-        self.log('train/loss', seg_loss, on_step=True, on_epoch=True, prog_bar=True)
+        # Step-wise loss goes to a separate ClearML plot
+        self.log('train_step/loss', seg_loss, on_step=True, on_epoch=False, prog_bar=False)
+        # Epoch loss stays with other train metrics
+        self.log('train/loss', seg_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/precision', prec, on_step=False, on_epoch=True)
