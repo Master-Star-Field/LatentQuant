@@ -270,9 +270,9 @@ class ClearMLLogger:
 
 class ClearMLUploadCallback(Callback):
     """
-    PyTorch Lightning callback for uploading checkpoints and embeddings to ClearML.
+    PyTorch Lightning callback for logging checkpoint and embedding paths to ClearML.
     
-    Automatically uploads:
+    Automatically logs local file paths for:
     - Latest checkpoint after each validation epoch
     - Per-epoch validation embeddings
     
@@ -290,7 +290,7 @@ class ClearMLUploadCallback(Callback):
     def __init__(self, task: Task, clearml_logger: ClearMLLogger = None, 
                  checkpoint_dir: str = "checkpoints", embedding_dir: str = "embeddings"):
         """
-        Initialize ClearML upload callback.
+        Initialize ClearML path logging callback.
         
         Args:
             task: ClearML Task object
@@ -309,41 +309,30 @@ class ClearMLUploadCallback(Callback):
         if self.task is None:
             return
         
-        # Upload latest checkpoint
+        # Log checkpoint path
         try:
             ckpt_path = self._find_latest_checkpoint()
             if ckpt_path:
-                self.task.upload_artifact(
-                    name=f"checkpoint_epoch{pl_module.current_epoch}",
-                    artifact_object=ckpt_path
-                )
+                abs_path = os.path.abspath(ckpt_path)
                 if self.clearml_logger:
-                    self.clearml_logger.report_text(f"Uploaded checkpoint: {ckpt_path}")
+                    self.clearml_logger.report_text(f"Checkpoint saved: {abs_path}")
         except Exception as e:
             if self.clearml_logger:
-                self.clearml_logger.report_text(f"Failed uploading checkpoint: {e}")
+                self.clearml_logger.report_text(f"Failed finding checkpoint: {e}")
         
-        # Upload per-epoch embedding
+        # Log embedding path
         try:
             emb_path = os.path.join(
                 self.embedding_dir, 
                 f"val_embedding_epoch{pl_module.current_epoch}.pt"
             )
             if os.path.exists(emb_path):
-                self.task.upload_artifact(
-                    name=f"val_embedding_epoch{pl_module.current_epoch}",
-                    artifact_object=emb_path
-                )
+                abs_path = os.path.abspath(emb_path)
                 if self.clearml_logger:
-                    self.clearml_logger.report_text(f"Uploaded embedding: {emb_path}")
-                # Clean up local embedding file after upload
-                try:
-                    os.remove(emb_path)
-                except Exception:
-                    pass
+                    self.clearml_logger.report_text(f"Embedding saved: {abs_path}")
         except Exception as e:
             if self.clearml_logger:
-                self.clearml_logger.report_text(f"Failed uploading embedding: {e}")
+                self.clearml_logger.report_text(f"Failed logging embedding path: {e}")
     
     def _find_latest_checkpoint(self):
         """Find the most recently modified checkpoint file."""
