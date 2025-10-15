@@ -5,3 +5,5 @@ venv/
 
 data/
 outputs/
+
+embeddings_squeeze.egg-info/
