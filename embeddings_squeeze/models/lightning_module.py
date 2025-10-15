@@ -98,6 +98,34 @@ class VQSqueezeModule(pl.LightningModule):
     
     def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool, target_params: int = 15_000_000):
         """Setup backbone with optional adapter layers."""
+        def calc_adapter_params(in_dim, reduced_dim):
+            """Calculate exact number of parameters for adapter."""
+            # Conv1: in_dim -> reduced_dim, 3x3 kernel
+            conv1_params = in_dim * reduced_dim * 9 + reduced_dim
+            # BatchNorm: reduced_dim
+            bn_params = reduced_dim * 2
+            # Conv2: reduced_dim -> in_dim, 1x1 kernel  
+            conv2_params = reduced_dim * in_dim + in_dim
+            return conv1_params + bn_params + conv2_params
+        
+        def find_reduced_dim(target_params, feature_dim):
+            """Find reduced_dim that gives closest to target_params."""
+            # Start with approximation
+            approx_dim = target_params // (feature_dim * 10)
+            
+            # Fine-tune around the approximation
+            best_dim = approx_dim
+            best_diff = abs(calc_adapter_params(feature_dim, approx_dim) - target_params)
+            
+            for test_dim in range(max(64, approx_dim - 100), min(4096, approx_dim + 100)):
+                param_count = calc_adapter_params(feature_dim, test_dim)
+                diff = abs(param_count - target_params)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_dim = test_dim
+            
+            return best_dim
+
         if add_adapter:
             # Freeze backbone
             for param in self.backbone.parameters():
@@ -107,14 +135,8 @@ class VQSqueezeModule(pl.LightningModule):
             # Strategy: Use bottleneck architecture with reduced intermediate dimensions
             # Previous adapter had ~80M parameters, new target is much smaller (default 15M)
             
-            # Calculate intermediate dimensions for target parameter count
-            # Bottleneck: feature_dim -> reduced_dim -> feature_dim
-            # Parameters = feature_dim * reduced_dim * 9 + reduced_dim + reduced_dim * 2 + reduced_dim * feature_dim + feature_dim
-            # ≈ feature_dim * reduced_dim * 11 (ignoring small terms)
-            
-            # Solve: feature_dim * reduced_dim * 11 ≈ target_params
-            # reduced_dim = target_params / (feature_dim * 11)
-            reduced_dim = max(64, min(1024, target_params // (feature_dim * 11)))
+            # Calculate the exact reduced_dim needed
+            reduced_dim = find_reduced_dim(target_params, feature_dim)
             
             # Add lightweight bottleneck adapter after feature extraction
             self.feature_adapter = nn.Sequential(
@@ -131,9 +153,10 @@ class VQSqueezeModule(pl.LightningModule):
             
             # Log the actual parameter count for verification
             total_params = sum(p.numel() for p in self.feature_adapter.parameters())
+            expected_params = calc_adapter_params(feature_dim, reduced_dim)
             ratio = total_params / target_params
             print(f"Lightweight adapter created with {total_params:,} parameters "
-                  f"(target: {target_params:,}, ratio: {ratio:.2f}x, "
+                  f"(target: {target_params:,}, expected: {expected_params:,}, ratio: {ratio:.3f}, "
                   f"reduced_dim={reduced_dim}, feature_dim={feature_dim})")
         else:
             self.feature_adapter = None
