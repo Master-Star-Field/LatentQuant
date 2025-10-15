@@ -1,0 +1,87 @@
+site_name: "LatentQuant"
+site_description: "Neat quantization library."
+site_author: "Master-Star-Field"
+repo_url: https://github.com/Master-Star-Field/LatentQuant
+repo_name: Master-Star-Field/LatentQuant
+edit_uri: edit/feature/docs/docs/
+
+# Где лежат markdown-файлы
+docs_dir: docs
+site_dir: site  # этот каталог НЕ нужно коммитить
+
+theme:
+  name: material
+  language: ru
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - toc.integrate
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.tabs.link
+    - content.tooltips
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - footnotes
+  - codehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      use_pygments: true
+  - pymdownx.inlinehilite
+  - attr_list
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: false
+  - git-authors
+  - glightbox
+  - mermaid2
+  - gen-files:
+      scripts:
+        - docs/scripts/gen_api_docs.py
+  - literate-nav
+  - minify:
+      minify_html: true
+  
+  - mkdocstrings:
+      handlers:
+        python:
+          setup_commands:
+            - import sys, os; sys.path.append(os.getcwd())
+          # Документация из type-hints
+          options:
+            show_if_no_docstring: true
+            separate_signature: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            show_symbol_type_heading: true
+            show_root_toc_entry: false
+
+nav:
+  - "🏠 Главная": index.md
+  - "🚀 Быстрый старт": getting-started.md
+  - "Руководства":
+      - "Настройка": guides/config.md
+      - "Кастомизация": guides/customize.md
+  - "API":
+      - "latquant": api/README.md
+  - "Changelog": changelog.md

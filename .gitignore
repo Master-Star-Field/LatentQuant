@@ -7,3 +7,8 @@ data/
 outputs/
 
 embeddings_squeeze.egg-info/
+
+# MkDocs
+/site
+*.log
+
