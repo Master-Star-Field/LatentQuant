@@ -38,7 +38,7 @@ class OxfordPetDataModule(BaseDataModule):
         self,
         data_path: str = './data',
         batch_size: int = 4,
-        num_workers: int = -1,
+        num_workers: int = 6,
         pin_memory: bool = True,
         image_size: int = 224,
         subset_size: int = None,
