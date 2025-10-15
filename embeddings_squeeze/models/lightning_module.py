@@ -22,7 +22,7 @@ class VQSqueezeModule(pl.LightningModule):
     
     Features:
     - Multiple quantizer support (VQ, FSQ, LFQ, RVQ)
-    - Adapter layers for fine-tuning frozen backbones
+    - Adapter layers for fine-tuning frozen backbones with configurable parameter count
     - Advanced loss functions (CE, Dice, Focal, Combined)
     - Embedding extraction and saving
     """
@@ -38,6 +38,7 @@ class VQSqueezeModule(pl.LightningModule):
         class_weights: Optional[list] = None,
         add_adapter: bool = False,
         feature_dim: int = 2048,
+        adapter_target_params: int = 15_000_000,
         clearml_logger: Optional[Any] = None,
         **kwargs
     ):
@@ -50,10 +51,11 @@ class VQSqueezeModule(pl.LightningModule):
         self.loss_type = loss_type
         self.add_adapter = add_adapter
         self.feature_dim = feature_dim
+        self.adapter_target_params = adapter_target_params
         
         # Setup backbone with optional adapters
         self.backbone = backbone
-        self._setup_backbone_with_adapters(feature_dim, add_adapter)
+        self._setup_backbone_with_adapters(feature_dim, add_adapter, adapter_target_params)
         
         # Quantizer (optional)
         self.quantizer = quantizer
@@ -94,23 +96,45 @@ class VQSqueezeModule(pl.LightningModule):
         self._val_backbone_embeddings = []
         self._val_quantized_embeddings = []
     
-    def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool):
+    def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool, target_params: int = 15_000_000):
         """Setup backbone with optional adapter layers."""
         if add_adapter:
             # Freeze backbone
             for param in self.backbone.parameters():
                 param.requires_grad = False
             
-            # Add adapter after feature extraction
+            # Create lightweight adapter with configurable parameter count
+            # Strategy: Use bottleneck architecture with reduced intermediate dimensions
+            # Previous adapter had ~80M parameters, new target is much smaller (default 15M)
+            
+            # Calculate intermediate dimensions for target parameter count
+            # Bottleneck: feature_dim -> reduced_dim -> feature_dim
+            # Parameters = feature_dim * reduced_dim * 9 + reduced_dim + reduced_dim * 2 + reduced_dim * feature_dim + feature_dim
+            # ≈ feature_dim * reduced_dim * 11 (ignoring small terms)
+            
+            # Solve: feature_dim * reduced_dim * 11 ≈ target_params
+            # reduced_dim = target_params / (feature_dim * 11)
+            reduced_dim = max(64, min(1024, target_params // (feature_dim * 11)))
+            
+            # Add lightweight bottleneck adapter after feature extraction
             self.feature_adapter = nn.Sequential(
-                nn.Conv2d(feature_dim, feature_dim, 3, padding=1),
-                nn.BatchNorm2d(feature_dim),
-                nn.ReLU(),
-                nn.Conv2d(feature_dim, feature_dim, 1)
+                # Down-projection: feature_dim -> reduced_dim
+                nn.Conv2d(feature_dim, reduced_dim, 3, padding=1),
+                nn.BatchNorm2d(reduced_dim),
+                nn.ReLU(inplace=True),
+                # Up-projection: reduced_dim -> feature_dim  
+                nn.Conv2d(reduced_dim, feature_dim, 1)
             )
             # Zero initialization for residual connection
             nn.init.zeros_(self.feature_adapter[3].weight)
             nn.init.zeros_(self.feature_adapter[3].bias)
+            
+            # Log the actual parameter count for verification
+            total_params = sum(p.numel() for p in self.feature_adapter.parameters())
+            ratio = total_params / target_params
+            print(f"Lightweight adapter created with {total_params:,} parameters "
+                  f"(target: {target_params:,}, ratio: {ratio:.2f}x, "
+                  f"reduced_dim={reduced_dim}, feature_dim={feature_dim})")
         else:
             self.feature_adapter = None
     

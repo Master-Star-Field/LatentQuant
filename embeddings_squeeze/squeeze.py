@@ -177,6 +177,8 @@ def main():
                        help="Number of classes")
     parser.add_argument("--add_adapter", action="store_true",
                        help="Add adapter layers to frozen backbone")
+    parser.add_argument("--adapter_target_params", type=int, default=15_000_000,
+                       help="Target parameter count for lightweight adapter (default: 15M)")
     parser.add_argument("--feature_dim", type=int, default=None,
                        help="Feature dimension (auto-detected if not set)")
     parser.add_argument("--loss_type", type=str, default="ce",
@@ -255,6 +257,8 @@ def main():
     print(f"Quantizer: {config.quantizer.type if config.quantizer.enabled else 'None'}")
     print(f"Loss type: {config.model.loss_type}")
     print(f"Epochs: {config.training.epochs}")
+    if config.model.add_adapter:
+        print(f"Adapter enabled with target params: {config.model.adapter_target_params:,}")
     
     # Create components
     # IMPORTANT: Create backbone first to auto-detect feature_dim
@@ -278,6 +282,7 @@ def main():
         class_weights=config.model.class_weights,
         add_adapter=config.model.add_adapter,
         feature_dim=config.model.feature_dim,
+        adapter_target_params=config.model.adapter_target_params,
         clearml_logger=clearml_logger
     )
 

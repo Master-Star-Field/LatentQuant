@@ -56,6 +56,7 @@ class ModelConfig:
     # Adapter configuration
     add_adapter: bool = False
     feature_dim: int = 768  # Default for ViT
+    adapter_target_params: int = 15_000_000  # Target parameter count for lightweight adapter
     
     # Loss configuration
     loss_type: str = "ce"  # "ce", "dice", "focal", "combined"
@@ -144,6 +145,8 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
         config.model.add_adapter = args["add_adapter"]
     if "feature_dim" in args and args["feature_dim"] is not None:
         config.model.feature_dim = args["feature_dim"]
+    if "adapter_target_params" in args:
+        config.model.adapter_target_params = args["adapter_target_params"]
     if "loss_type" in args:
         config.model.loss_type = args["loss_type"]
     if "class_weights" in args:
