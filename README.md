@@ -23,6 +23,15 @@ cd embeddings_squeeze
 pip install -e .
 ```
 
+After installation, you can run the CLI script using either:
+```bash
+# Using Python module syntax
+python -m embeddings_squeeze.squeeze --help
+
+# Or using the installed console script
+embeddings-squeeze --help
+```
+
 ### Dependencies
 
 The package requires:
@@ -39,34 +48,38 @@ The package requires:
 Train VQ compression on Oxford-IIIT Pet dataset with ViT backbone:
 
 ```bash
-cd embeddings_squeeze
-python squeeze.py --model vit --dataset oxford_pet --num_vectors 128 --epochs 3
+# After pip install -e .
+embeddings-squeeze --model vit --dataset oxford_pet --codebook_size 512 --epochs 3
+
+# Or without installation
+python -m embeddings_squeeze.squeeze --model vit --dataset oxford_pet --codebook_size 512 --epochs 3
 ```
 
 ### Advanced Usage
 
 ```bash
-cd embeddings_squeeze
-python squeeze.py \
+embeddings-squeeze \
     --model deeplab \
     --dataset oxford_pet \
-    --num_vectors 256 \
-    --commitment_cost 0.5 \
+    --quantizer_type vq \
+    --codebook_size 512 \
+    --bottleneck_dim 64 \
     --epochs 10 \
     --batch_size 8 \
     --lr 1e-4 \
     --data_path ./data \
     --output_dir ./outputs \
-    --experiment_name deeplab_vq_256
+    --experiment_name deeplab_vq_512
 ```
 
 ### Command Line Arguments
 
 #### Model Arguments
 - `--model`: Backbone model (`vit` or `deeplab`)
-- `--num_vectors`: Number of codebook vectors (default: 128)
-- `--commitment_cost`: VQ commitment cost (default: 0.25)
-- `--metric_type`: Distance metric (`euclidean` or `cosine`)
+- `--quantizer_type`: Quantizer type (`vq`, `fsq`, `lfq`, `rvq`, or `none`)
+- `--codebook_size`: Number of codebook vectors (default: 512)
+- `--bottleneck_dim`: Bottleneck dimension (default: 64)
+- `--loss_type`: Loss function (`ce`, `dice`, `focal`, or `combined`)
 
 #### Training Arguments
 - `--epochs`: Number of training epochs (default: 10)
@@ -83,36 +96,51 @@ python squeeze.py \
 - `--output_dir`: Output directory (default: `./outputs`)
 - `--experiment_name`: Experiment name (default: `vq_squeeze`)
 - `--seed`: Random seed (default: 42)
+- `--use_clearml`: Enable ClearML logging
+- `--project_name`: Project name for ClearML (default: `embeddings_squeeze`)
+- `--task_name`: Task name for ClearML
 
 ## Package Structure
 
 ```
-embeddings_squeeze/
-├── models/                 # Model architectures
-│   ├── vq/                 # Vector Quantization components
-│   ├── backbones/          # Segmentation backbones
-│   └── lightning_module.py # PyTorch Lightning wrapper
-├── data/                   # Data modules
-├── utils/                  # Utilities
-└── configs/                # Configuration management
+project/
+├── src/                    # Source code (mapped to embeddings_squeeze package)
+│   ├── models/            # Model architectures
+│   │   └── backbones/     # Segmentation backbones
+│   ├── data/              # Data modules
+│   ├── loggers/           # Logging utilities (ClearML integration)
+│   ├── utils/             # Utility functions
+│   ├── configs/           # Configuration management
+│   └── squeeze.py         # Main training CLI script
+├── outputs/               # Training outputs (gitignored)
+├── setup.py               # Package setup
+├── pyproject.toml         # Project configuration
+└── README.md              # This file
 ```
 
 ## Usage as Python Package
 
 ```python
 from embeddings_squeeze.models.backbones import ViTSegmentationBackbone
-from embeddings_squeeze.models.vq import VectorQuantizer
+from embeddings_squeeze.models.quantizers import VQWithProjection
 from embeddings_squeeze.models.lightning_module import VQSqueezeModule
 from embeddings_squeeze.data import OxfordPetDataModule
 
 # Create backbone
 backbone = ViTSegmentationBackbone(num_classes=21)
 
-# Create VQ model
+# Create quantizer
+quantizer = VQWithProjection(
+    input_dim=768,  # ViT feature dimension
+    codebook_size=512,
+    bottleneck_dim=64
+)
+
+# Create model
 model = VQSqueezeModule(
     backbone=backbone,
-    num_vectors=128,
-    commitment_cost=0.25
+    quantizer=quantizer,
+    num_classes=21
 )
 
 # Create data module

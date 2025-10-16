@@ -18,7 +18,16 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/embeddings_squeeze",
-    packages=find_packages(),
+    package_dir={"embeddings_squeeze": "src"},
+    packages=[
+        "embeddings_squeeze",
+        "embeddings_squeeze.configs",
+        "embeddings_squeeze.data",
+        "embeddings_squeeze.loggers",
+        "embeddings_squeeze.models",
+        "embeddings_squeeze.models.backbones",
+        "embeddings_squeeze.utils",
+    ],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
@@ -47,7 +56,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "squeeze=embeddings_squeeze.cli:squeeze",
+            "embeddings-squeeze=embeddings_squeeze.squeeze:main",
         ],
     },
     include_package_data=True,
