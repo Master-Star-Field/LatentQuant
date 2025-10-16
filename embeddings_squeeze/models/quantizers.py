@@ -67,6 +67,7 @@ class VQWithProjection(BaseQuantizer):
     ):
         super().__init__(input_dim)
         self.bottleneck_dim = bottleneck_dim
+        self.codebook_size = codebook_size
         
         # Down projection (e.g., 2048 -> 64)
         self.project_in = nn.Linear(input_dim, bottleneck_dim)

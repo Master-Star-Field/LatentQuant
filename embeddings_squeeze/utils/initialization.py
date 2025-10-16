@@ -47,7 +47,7 @@ def initialize_codebook_from_data(
     
     print(f"Running k-means on {all_features.shape[0]} features...")
     kmeans = MiniBatchKMeans(
-        n_clusters=vq_model.num_vectors,
+        n_clusters=vq_model.codebook_size,
         random_state=0,
         batch_size=1000,
         max_iter=100
@@ -55,9 +55,10 @@ def initialize_codebook_from_data(
     kmeans.fit(all_features)
     
     # Update codebook with cluster centers
-    vq_model.codebook.embeddings.data = torch.tensor(kmeans.cluster_centers_).to(device).float()
+    # Access the underlying VectorQuantize codebook
+    vq_model.vq._codebook.embed.data = torch.tensor(kmeans.cluster_centers_).to(device).float()
     
     print(f"Codebook initialized:")
-    print(f"  Mean: {vq_model.codebook.embeddings.mean():.2f}")
-    print(f"  Std: {vq_model.codebook.embeddings.std():.2f}")
-    print(f"  Norm: {vq_model.codebook.embeddings.norm(dim=1).mean():.2f}")
+    print(f"  Mean: {vq_model.vq._codebook.embed.mean():.2f}")
+    print(f"  Std: {vq_model.vq._codebook.embed.std():.2f}")
+    print(f"  Norm: {vq_model.vq._codebook.embed.norm(dim=1).mean():.2f}")
