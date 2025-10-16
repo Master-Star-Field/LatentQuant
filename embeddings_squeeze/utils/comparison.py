@@ -109,18 +109,21 @@ def find_best_worst_samples(results: List[Tuple[int, float, torch.Tensor, torch.
     Args:
         results: List of (sample_idx, iou, image, mask, prediction) tuples
         n_best: Number of best samples to return
-        n_worst: Number of worst samples to return
+        n_worst: Number of worst samples to return (will get n_worst+2 and remove last 2)
         
     Returns:
         best_samples: List of best sample tuples
-        worst_samples: List of worst sample tuples
+        worst_samples: List of worst sample tuples (excluding the 2 worst which may have wrong ground truth)
     """
     # Sort by IoU (descending)
     sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
     
-    # Get best and worst
+    # Get best samples
     best_samples = sorted_results[:n_best]
-    worst_samples = sorted_results[-n_worst:]
+    
+    # Get worst samples: take n_worst+2 and remove the last 2 (likely wrong ground truth)
+    worst_candidates = sorted_results[-(n_worst+2):]
+    worst_samples = worst_candidates[:-2]  # Remove the last 2 samples
     
     return best_samples, worst_samples
 
