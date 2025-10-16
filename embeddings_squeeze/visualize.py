@@ -99,9 +99,19 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
         from models.quantizers import VQWithProjection
         
         quantizer_config = checkpoint.get('hyper_parameters', {}).get('quantizer', {})
+        
+        # Extract codebook size from checkpoint filename if not in hyperparameters
+        codebook_size = quantizer_config.get('codebook_size', 512)
+        if 'vq_256' in vq_checkpoint_path:
+            codebook_size = 256
+        elif 'vq_512' in vq_checkpoint_path:
+            codebook_size = 512
+        elif 'vq_1024' in vq_checkpoint_path:
+            codebook_size = 1024
+            
         quantizer = VQWithProjection(
             input_dim=backbone.feature_dim,
-            codebook_size=quantizer_config.get('codebook_size', 512),
+            codebook_size=codebook_size,
             bottleneck_dim=quantizer_config.get('bottleneck_dim', 64),
             decay=quantizer_config.get('decay', 0.99),
             commitment_weight=quantizer_config.get('commitment_weight', 0.25)
