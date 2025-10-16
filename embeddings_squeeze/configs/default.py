@@ -53,10 +53,11 @@ class ModelConfig:
     # DeepLab specific  
     deeplab_weights: str = "COCO_WITH_VOC_LABELS_V1"
     
-    # Adapter configuration
-    add_adapter: bool = False
-    feature_dim: int = 768  # Default for ViT
-    adapter_target_params: int = 15_000_000  # Target parameter count for lightweight adapter
+    # Feature dimension (auto-detected based on backbone if not set)
+    feature_dim: int = 768  # Default for ViT, auto-adjusted for DeepLab (2048)
+    
+    # Fine-tuning configuration
+    unfreeze_last_layer: bool = False  # Unfreeze only the last layer of backbone for fine-tuning
     
     # Loss configuration
     loss_type: str = "ce"  # "ce", "dice", "focal", "combined"
@@ -141,12 +142,8 @@ def update_config_from_args(config: ExperimentConfig, args: Dict[str, Any]) -> E
         config.model.backbone = args["model"]
     if "num_classes" in args:
         config.model.num_classes = args["num_classes"]
-    if "add_adapter" in args:
-        config.model.add_adapter = args["add_adapter"]
-    if "feature_dim" in args and args["feature_dim"] is not None:
-        config.model.feature_dim = args["feature_dim"]
-    if "adapter_target_params" in args:
-        config.model.adapter_target_params = args["adapter_target_params"]
+    if "unfreeze_last_layer" in args:
+        config.model.unfreeze_last_layer = args["unfreeze_last_layer"]
     if "loss_type" in args:
         config.model.loss_type = args["loss_type"]
     if "class_weights" in args:

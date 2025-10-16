@@ -22,7 +22,7 @@ class VQSqueezeModule(pl.LightningModule):
     
     Features:
     - Multiple quantizer support (VQ, FSQ, LFQ, RVQ)
-    - Adapter layers for fine-tuning frozen backbones with configurable parameter count
+    - Fine-tuning support with last layer unfreezing option
     - Advanced loss functions (CE, Dice, Focal, Combined)
     - Embedding extraction and saving
     """
@@ -36,9 +36,7 @@ class VQSqueezeModule(pl.LightningModule):
         vq_loss_weight: float = 0.1,
         loss_type: str = 'ce',
         class_weights: Optional[list] = None,
-        add_adapter: bool = False,
-        feature_dim: int = 2048,
-        adapter_target_params: int = 15_000_000,
+        unfreeze_last_layer: bool = False,
         clearml_logger: Optional[Any] = None,
         **kwargs
     ):
@@ -49,13 +47,11 @@ class VQSqueezeModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.vq_loss_weight = vq_loss_weight
         self.loss_type = loss_type
-        self.add_adapter = add_adapter
-        self.feature_dim = feature_dim
-        self.adapter_target_params = adapter_target_params
+        self.unfreeze_last_layer = unfreeze_last_layer
         
-        # Setup backbone with optional adapters
+        # Setup backbone with optional last layer unfreezing
         self.backbone = backbone
-        self._setup_backbone_with_adapters(feature_dim, add_adapter, adapter_target_params)
+        self._setup_backbone_freezing(unfreeze_last_layer)
         
         # Quantizer (optional)
         self.quantizer = quantizer
@@ -96,70 +92,38 @@ class VQSqueezeModule(pl.LightningModule):
         self._val_backbone_embeddings = []
         self._val_quantized_embeddings = []
     
-    def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool, target_params: int = 15_000_000):
-        """Setup backbone with optional adapter layers."""
-        def calc_adapter_params(in_dim, reduced_dim):
-            """Calculate exact number of parameters for adapter."""
-            # Conv1: in_dim -> reduced_dim, 3x3 kernel
-            conv1_params = in_dim * reduced_dim * 9 + reduced_dim
-            # BatchNorm: reduced_dim
-            bn_params = reduced_dim * 2
-            # Conv2: reduced_dim -> in_dim, 1x1 kernel  
-            conv2_params = reduced_dim * in_dim + in_dim
-            return conv1_params + bn_params + conv2_params
-        
-        def find_reduced_dim(target_params, feature_dim):
-            """Find reduced_dim that gives closest to target_params."""
-            # Start with approximation
-            approx_dim = target_params // (feature_dim * 10)
-            
-            # Fine-tune around the approximation
-            best_dim = approx_dim
-            best_diff = abs(calc_adapter_params(feature_dim, approx_dim) - target_params)
-            
-            for test_dim in range(max(64, approx_dim - 100), min(4096, approx_dim + 100)):
-                param_count = calc_adapter_params(feature_dim, test_dim)
-                diff = abs(param_count - target_params)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_dim = test_dim
-            
-            return best_dim
-
-        if add_adapter:
-            # Freeze backbone
+    def _setup_backbone_freezing(self, unfreeze_last_layer: bool):
+        """Setup backbone freezing with optional last layer unfreezing."""
+        if unfreeze_last_layer:
+            # Freeze entire backbone first
             for param in self.backbone.parameters():
                 param.requires_grad = False
             
-            # Create lightweight adapter with configurable parameter count
-            # Strategy: Use bottleneck architecture with reduced intermediate dimensions
-            # Previous adapter had ~80M parameters, new target is much smaller (default 15M)
-            
-            # Calculate the exact reduced_dim needed
-            reduced_dim = find_reduced_dim(target_params, feature_dim)
-            
-            # Add lightweight bottleneck adapter after feature extraction
-            self.feature_adapter = nn.Sequential(
-                # Down-projection: feature_dim -> reduced_dim
-                nn.Conv2d(feature_dim, reduced_dim, 3, padding=1),
-                nn.BatchNorm2d(reduced_dim),
-                nn.ReLU(inplace=True),
-                # Up-projection: reduced_dim -> feature_dim  
-                nn.Conv2d(reduced_dim, feature_dim, 1)
-            )
-            # Zero initialization for residual connection
-            nn.init.zeros_(self.feature_adapter[3].weight)
-            nn.init.zeros_(self.feature_adapter[3].bias)
-            
-            # Log the actual parameter count for verification
-            total_params = sum(p.numel() for p in self.feature_adapter.parameters())
-            expected_params = calc_adapter_params(feature_dim, reduced_dim)
-            ratio = total_params / target_params
-            print(f"Lightweight adapter created with {total_params:,} parameters "
-                  f"(target: {target_params:,}, expected: {expected_params:,}, ratio: {ratio:.3f}, "
-                  f"reduced_dim={reduced_dim}, feature_dim={feature_dim})")
-        else:
-            self.feature_adapter = None
+            # Unfreeze the last layer based on backbone type
+            # Check if backbone has a 'backbone' attribute (DeepLabV3)
+            if hasattr(self.backbone, 'backbone'):
+                # DeepLabV3 with ResNet backbone
+                if hasattr(self.backbone.backbone, 'layer4'):
+                    # Unfreeze last ResNet layer (layer4)
+                    for param in self.backbone.backbone.layer4.parameters():
+                        param.requires_grad = True
+                    trainable_params = sum(p.numel() for p in self.backbone.backbone.layer4.parameters())
+                    print(f"Unfroze last layer (layer4) with {trainable_params:,} parameters")
+                else:
+                    print("Warning: Could not identify last layer in backbone")
+            # Check if it's a ViT backbone
+            elif hasattr(self.backbone, 'backbone') and hasattr(self.backbone.backbone, 'vit'):
+                # ViT backbone - unfreeze last encoder block
+                if hasattr(self.backbone.backbone.vit.encoder, 'layers'):
+                    last_block = self.backbone.backbone.vit.encoder.layers[-1]
+                    for param in last_block.parameters():
+                        param.requires_grad = True
+                    trainable_params = sum(p.numel() for p in last_block.parameters())
+                    print(f"Unfroze last transformer block with {trainable_params:,} parameters")
+                else:
+                    print("Warning: Could not identify last layer in ViT backbone")
+            else:
+                print("Warning: Unknown backbone type, could not unfreeze last layer")
     
     def _init_loss(self, loss_type: str, class_weights: Optional[list]):
         """Initialize loss function based on type."""
@@ -193,12 +157,8 @@ class VQSqueezeModule(pl.LightningModule):
             original_features: Extracted features (before quantization)
             quantized_features: Features after quantization (same as original if no quantizer)
         """
-        # Extract features
-        features = self.backbone.extract_features(images, detach=self.feature_adapter is not None)
-        
-        # Apply adapter if present
-        if self.feature_adapter is not None:
-            features = features + self.feature_adapter(features)
+        # Extract features (detach only if backbone is fully frozen)
+        features = self.backbone.extract_features(images, detach=False)
         
         # Store original features for embedding extraction
         original_features = features
@@ -562,17 +522,12 @@ class VQSqueezeModule(pl.LightningModule):
         """Configure optimizer - only trainable parameters."""
         params = []
         
-        # Add adapter parameters if present
-        if self.feature_adapter is not None:
-            params += list(self.feature_adapter.parameters())
+        # Add backbone parameters that are trainable
+        params += [p for p in self.backbone.parameters() if p.requires_grad]
         
         # Add quantizer parameters if present
         if self.quantizer is not None:
             params += list(self.quantizer.parameters())
-        
-        # Add backbone parameters if not frozen
-        if self.feature_adapter is None:
-            params += [p for p in self.backbone.parameters() if p.requires_grad]
         
         # Remove duplicates
         params = list({id(p): p for p in params}.values())
@@ -583,6 +538,8 @@ class VQSqueezeModule(pl.LightningModule):
         return torch.optim.AdamW(params, lr=self.learning_rate)
     
     def on_train_start(self):
-        """Ensure frozen backbone stays in eval mode."""
-        if self.feature_adapter is not None:
-            self.backbone.eval()
+        """Set backbone to appropriate mode based on freezing state."""
+        if self.unfreeze_last_layer:
+            # Set backbone to train mode so unfrozen last layer can be trained
+            # But frozen parts will still not update due to requires_grad=False
+            self.backbone.train()
