@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from embeddings_squeeze.data import OxfordPetDataModule
 
-from ..metrics import create_metric, list_available_metrics
+from ..metrics import create_metric
 from ..extraction import (
     load_checkpoint,
     load_original_backbone,
@@ -73,6 +73,7 @@ class MetricsEvaluator:
         
         # Setup metrics
         if metrics is None:
+            from ..metrics import list_available_metrics
             self.metrics = list_available_metrics()
         else:
             self.metrics = metrics
