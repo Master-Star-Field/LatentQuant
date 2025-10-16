@@ -43,6 +43,7 @@ def create_quantizer(config):
     elif qtype == 'fsq':
         return FSQWithProjection(
             input_dim=feature_dim,
+            codebook_size=config.quantizer.codebook_size,
             levels=config.quantizer.levels
         )
     elif qtype == 'lfq':
