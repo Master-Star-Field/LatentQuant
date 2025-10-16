@@ -188,14 +188,14 @@ class VQSqueezeModule(pl.LightningModule):
         else:
             # Reshape for loss computation
             if pred.dim() == 4:  # [B, C, H, W]
-                pred = pred.permute(0, 2, 3, 1).contiguous().view(-1, pred.size(1))
-                target = target.view(-1)
+                pred = pred.permute(0, 2, 3, 1).contiguous().reshape(-1, pred.size(1))
+                target = target.reshape(-1)
             elif pred.dim() == 3:  # [B, N, C] for point clouds
-                pred = pred.view(-1, pred.size(-1))  # [B*N, C]
-                target = target.view(-1)  # [B*N]
+                pred = pred.reshape(-1, pred.size(-1))  # [B*N, C]
+                target = target.reshape(-1)  # [B*N]
             elif pred.dim() == 2:  # [B, C] - already flattened
-                pred = pred.view(-1, pred.size(-1))
-                target = target.view(-1)
+                pred = pred.reshape(-1, pred.size(-1))
+                target = target.reshape(-1)
             
             seg_loss = self.criterion(pred, target)
         
@@ -240,8 +240,8 @@ class VQSqueezeModule(pl.LightningModule):
         
         # Compute metrics - reshape for point cloud data
         if output.dim() == 3:  # [B, N, C] for point clouds
-            output_flat = output.view(-1, output.size(-1))  # [B*N, C]
-            masks_flat = masks.view(-1)  # [B*N]
+            output_flat = output.reshape(-1, output.size(-1))  # [B*N, C]
+            masks_flat = masks.reshape(-1)  # [B*N]
         else:
             output_flat = output
             masks_flat = masks
@@ -347,13 +347,13 @@ class VQSqueezeModule(pl.LightningModule):
             flat_labels = labels
             # для картинок labels могут быть [B,H,W] — расплющим
             if labels.dim() == 3:
-                flat_labels = labels.view(B, -1)
-                flat_logits = logits.view(B, -1, K)
+                flat_labels = labels.reshape(B, -1)
+                flat_logits = logits.reshape(B, -1, K)
         elif logits.dim() >= 4:
             # [B, C?, H, W] или [B, H, W, K] или 3D-варианты — расплющим всё, кроме B и K
             K = logits.size(-1)
-            flat_logits = logits.view(B, -1, K)
-            flat_labels = labels.view(B, -1)
+            flat_logits = logits.reshape(B, -1, K)
+            flat_labels = labels.reshape(B, -1)
         else:
             raise RuntimeError(f"Unexpected logits shape: {tuple(logits.shape)}")
 
