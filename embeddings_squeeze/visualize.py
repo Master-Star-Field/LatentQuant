@@ -105,7 +105,7 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
         codebook_size = quantizer_config.get('codebook_size', 512)
         bottleneck_dim = quantizer_config.get('bottleneck_dim', 64)
         
-        # Extract from filename
+        # Extract from filename - be more specific about patterns
         if 'fsq' in vq_checkpoint_path:
             quantizer_type = 'fsq'
         elif 'lfq' in vq_checkpoint_path:
@@ -115,21 +115,23 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
         elif 'vq' in vq_checkpoint_path:
             quantizer_type = 'vq'
             
-        # Extract bottleneck dimension from filename
-        if '_256' in vq_checkpoint_path:
-            bottleneck_dim = 256
-        elif '_512' in vq_checkpoint_path:
-            bottleneck_dim = 512
-        elif '_1024' in vq_checkpoint_path:
-            bottleneck_dim = 1024
-            
-        # Extract codebook size from filename
+        # Extract codebook size from filename (more specific patterns)
         if 'vq_256' in vq_checkpoint_path or 'fsq_256' in vq_checkpoint_path or 'lfq_256' in vq_checkpoint_path:
             codebook_size = 256
         elif 'vq_512' in vq_checkpoint_path or 'fsq_512' in vq_checkpoint_path or 'lfq_512' in vq_checkpoint_path:
             codebook_size = 512
         elif 'vq_1024' in vq_checkpoint_path or 'fsq_1024' in vq_checkpoint_path or 'lfq_1024' in vq_checkpoint_path:
             codebook_size = 1024
+            
+        # Extract bottleneck dimension from filename (look for specific patterns)
+        # Check for patterns like "_64_", "_128_", "_256_" in the path
+        import re
+        bottleneck_match = re.search(r'_(\d+)_', vq_checkpoint_path)
+        if bottleneck_match:
+            potential_dim = int(bottleneck_match.group(1))
+            # Only use if it's a reasonable bottleneck dimension (not codebook size)
+            if potential_dim in [32, 64, 128, 256, 512] and potential_dim != codebook_size:
+                bottleneck_dim = potential_dim
         
         print(f"Creating {quantizer_type} quantizer with codebook_size={codebook_size}, bottleneck_dim={bottleneck_dim}")
         
