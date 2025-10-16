@@ -89,14 +89,8 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
     
     print(f"Loading VQ model from: {vq_checkpoint_path}")
     try:
-        # Create backbone for VQ model
-        backbone = create_backbone(config)
-        
-        # Load VQ model with backbone
-        vq_model = VQSqueezeModule.load_from_checkpoint(
-            vq_checkpoint_path,
-            backbone=backbone
-        )
+        # Load VQ model directly from checkpoint (it contains all weights including backbone)
+        vq_model = VQSqueezeModule.load_from_checkpoint(vq_checkpoint_path)
         vq_model.to(device)
         vq_model.eval()
     except Exception as e:
@@ -104,14 +98,8 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
     
     print(f"Loading baseline model from: {baseline_checkpoint_path}")
     try:
-        # Create backbone for baseline model
-        backbone = create_backbone(config)
-        
-        # Load baseline model with backbone
-        baseline_model = BaselineSegmentationModule.load_from_checkpoint(
-            baseline_checkpoint_path,
-            backbone=backbone
-        )
+        # Load baseline model directly from checkpoint (it contains all weights including backbone)
+        baseline_model = BaselineSegmentationModule.load_from_checkpoint(baseline_checkpoint_path)
         baseline_model.to(device)
         baseline_model.eval()
     except Exception as e:
