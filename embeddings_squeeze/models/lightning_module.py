@@ -435,11 +435,13 @@ class VQSqueezeModule(pl.LightningModule):
                     proj_2d_backbone = umap_module.UMAP(
                         n_neighbors=min(30, len(backbone_emb_np) - 2),
                         min_dist=0.01,
+                        init_method='pca',
                         metric='euclidean'
                     ).fit_transform(backbone_emb_np)
                     proj_2d_quantized = umap_module.UMAP(
                         n_neighbors=min(30, len(quantized_emb_np) - 2),
                         min_dist=0.01,
+                        init_method='pca',
                         metric='euclidean'
                     ).fit_transform(quantized_emb_np)
                     
