@@ -85,7 +85,7 @@ class TrainingConfig:
     
     # Checkpointing
     save_top_k: int = 3
-    monitor: str = "val/loss"
+    monitor: str = "loss/val"
     mode: str = "min"
 
 
