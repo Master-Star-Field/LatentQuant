@@ -3,7 +3,14 @@
 Visualization script for comparing VQ vs baseline segmentation results.
 
 Usage:
-    python visualize.py --vq_checkpoint ./outputs/vq_squeeze/version_0/last.ckpt --baseline_checkpoint ./outputs/baseline_segmentation_baseline/version_0/last.ckpt
+    python visualize.py --vq_checkpoint ./outputs/vit_vq_256/version_0/last.ckpt --baseline_checkpoint ./outputs/vit_baseline/version_0/last.ckpt
+    
+Examples:
+    # Compare ViT VQ vs ViT baseline
+    python visualize.py --vq_checkpoint ./outputs/vit_vq_256/version_0/last.ckpt --baseline_checkpoint ./outputs/vit_baseline/version_0/last.ckpt --model vit
+    
+    # Compare DeepLab VQ vs DeepLab baseline  
+    python visualize.py --vq_checkpoint ./outputs/deeplab_vq_512/version_0/last.ckpt --baseline_checkpoint ./outputs/deeplab_baseline/version_0/last.ckpt --model deeplab
 """
 
 import argparse
@@ -14,7 +21,7 @@ from pathlib import Path
 
 from models.backbones import ViTSegmentationBackbone, DeepLabV3SegmentationBackbone
 from models.lightning_module import VQSqueezeModule
-from train_baseline import BaselineSegmentationModule
+from models.baseline_module import BaselineSegmentationModule
 from data import OxfordPetDataModule
 from utils.comparison import prepare_visualization_data, visualize_comparison
 from configs.default import get_default_config, update_config_from_args
@@ -25,13 +32,13 @@ def create_backbone(config):
     if config.model.backbone.lower() == "vit":
         backbone = ViTSegmentationBackbone(
             num_classes=config.model.num_classes,
-            freeze_backbone=config.model.freeze_backbone
+            freeze_backbone=True  # Always freeze backbone for visualization
         )
     elif config.model.backbone.lower() == "deeplab":
         backbone = DeepLabV3SegmentationBackbone(
             weights_name=config.model.deeplab_weights,
             num_classes=config.model.num_classes,
-            freeze_backbone=config.model.freeze_backbone
+            freeze_backbone=True  # Always freeze backbone for visualization
         )
     else:
         raise ValueError(f"Unknown backbone: {config.model.backbone}")
@@ -70,15 +77,27 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
         vq_model: Loaded VQ model
         baseline_model: Loaded baseline model
     """
+    # Check if checkpoint files exist
+    if not os.path.exists(vq_checkpoint_path):
+        raise FileNotFoundError(f"VQ checkpoint not found: {vq_checkpoint_path}")
+    if not os.path.exists(baseline_checkpoint_path):
+        raise FileNotFoundError(f"Baseline checkpoint not found: {baseline_checkpoint_path}")
+    
     print(f"Loading VQ model from: {vq_checkpoint_path}")
-    vq_model = VQSqueezeModule.load_from_checkpoint(vq_checkpoint_path)
-    vq_model.to(device)
-    vq_model.eval()
+    try:
+        vq_model = VQSqueezeModule.load_from_checkpoint(vq_checkpoint_path)
+        vq_model.to(device)
+        vq_model.eval()
+    except Exception as e:
+        raise RuntimeError(f"Failed to load VQ model: {e}")
     
     print(f"Loading baseline model from: {baseline_checkpoint_path}")
-    baseline_model = BaselineSegmentationModule.load_from_checkpoint(baseline_checkpoint_path)
-    baseline_model.to(device)
-    baseline_model.eval()
+    try:
+        baseline_model = BaselineSegmentationModule.load_from_checkpoint(baseline_checkpoint_path)
+        baseline_model.to(device)
+        baseline_model.eval()
+    except Exception as e:
+        raise RuntimeError(f"Failed to load baseline model: {e}")
     
     return vq_model, baseline_model
 
@@ -114,7 +133,15 @@ def main():
     # Model arguments (should match training config)
     parser.add_argument("--model", type=str, default="vit",
                        choices=["vit", "deeplab"], help="Backbone model")
+    parser.add_argument("--num_classes", type=int, default=21,
+                       help="Number of classes")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
+    
+    # Additional model arguments
+    parser.add_argument("--deeplab_weights", type=str, default="COCO_WITH_VOC_LABELS_V1",
+                       help="DeepLab weights name")
+    parser.add_argument("--vit_weights", type=str, default="IMAGENET1K_V1",
+                       help="ViT weights name")
     
     args = parser.parse_args()
     
@@ -139,7 +166,10 @@ def main():
     
     # Create data module
     data_module = create_data_module(config)
-    data_module.setup(args.dataset_split)
+    if args.dataset_split == "test":
+        data_module.setup("test")
+    else:
+        data_module.setup("fit")
     
     # Get appropriate dataloader
     if args.dataset_split == "test":
@@ -189,6 +219,8 @@ def main():
     print(f"Dataset split: {args.dataset_split}")
     print(f"Model backbone: {config.model.backbone}")
     print(f"Number of classes: {config.model.num_classes}")
+    print(f"VQ checkpoint: {args.vq_checkpoint}")
+    print(f"Baseline checkpoint: {args.baseline_checkpoint}")
     print()
     print(f"Best VQ IoU scores: {[f'{iou:.3f}' for iou in best_ious]}")
     print(f"Worst VQ IoU scores: {[f'{iou:.3f}' for iou in worst_ious]}")

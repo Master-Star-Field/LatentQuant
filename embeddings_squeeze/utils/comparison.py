@@ -80,8 +80,10 @@ def evaluate_model(model, dataloader, device, num_classes: int = 21) -> List[Tup
             if hasattr(model, 'predict'):
                 predictions = model.predict(images)
             else:
-                # For VQ model
-                predictions = model.predict_with_vq(images)
+                # For VQ model - use forward pass and get argmax
+                with torch.no_grad():
+                    output, _, _, _, _ = model(images)
+                    predictions = output.argmax(dim=1)
             
             # Process each sample in batch
             for i in range(images.shape[0]):
