@@ -285,15 +285,15 @@ def main():
     
     # Initialize codebook if requested (only for VQ-based quantizers)
     # Note: Codebook initialization is currently disabled in this version
-    # if config.initialize_codebook and quantizer is not None:
-    #     print("Initializing codebook with k-means...")
-    #     initialize_codebook_from_data(
-    #         quantizer,
-    #         backbone,
-    #         data_module.train_dataloader(max_batches=config.training.max_batches),
-    #         model.device,
-    #         max_samples=config.max_init_samples
-    #     )
+    if config.initialize_codebook and quantizer is not None:
+        print("Initializing codebook with k-means...")
+        initialize_codebook_from_data(
+            quantizer,
+            backbone,
+            data_module.train_dataloader(max_batches=config.training.max_batches),
+            model.device,
+            max_samples=config.max_init_samples
+        )
 
     # Create trainer
     trainer = pl.Trainer(
