@@ -95,27 +95,77 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
         # Create backbone
         backbone = create_backbone(config)
         
-        # Create VQ quantizer based on checkpoint hyperparameters
-        from models.quantizers import VQWithProjection
+        # Create quantizer based on checkpoint hyperparameters
+        from models.quantizers import VQWithProjection, FSQWithProjection, LFQWithProjection, ResidualVQWithProjection
         
         quantizer_config = checkpoint.get('hyper_parameters', {}).get('quantizer', {})
         
-        # Extract codebook size from checkpoint filename if not in hyperparameters
+        # Extract quantizer type and parameters from checkpoint filename if not in hyperparameters
+        quantizer_type = quantizer_config.get('type', 'vq')
         codebook_size = quantizer_config.get('codebook_size', 512)
-        if 'vq_256' in vq_checkpoint_path:
-            codebook_size = 256
-        elif 'vq_512' in vq_checkpoint_path:
-            codebook_size = 512
-        elif 'vq_1024' in vq_checkpoint_path:
-            codebook_size = 1024
+        bottleneck_dim = quantizer_config.get('bottleneck_dim', 64)
+        
+        # Extract from filename
+        if 'fsq' in vq_checkpoint_path:
+            quantizer_type = 'fsq'
+        elif 'lfq' in vq_checkpoint_path:
+            quantizer_type = 'lfq'
+        elif 'rvq' in vq_checkpoint_path:
+            quantizer_type = 'rvq'
+        elif 'vq' in vq_checkpoint_path:
+            quantizer_type = 'vq'
             
-        quantizer = VQWithProjection(
-            input_dim=backbone.feature_dim,
-            codebook_size=codebook_size,
-            bottleneck_dim=quantizer_config.get('bottleneck_dim', 64),
-            decay=quantizer_config.get('decay', 0.99),
-            commitment_weight=quantizer_config.get('commitment_weight', 0.25)
-        )
+        # Extract bottleneck dimension from filename
+        if '_256' in vq_checkpoint_path:
+            bottleneck_dim = 256
+        elif '_512' in vq_checkpoint_path:
+            bottleneck_dim = 512
+        elif '_1024' in vq_checkpoint_path:
+            bottleneck_dim = 1024
+            
+        # Extract codebook size from filename
+        if 'vq_256' in vq_checkpoint_path or 'fsq_256' in vq_checkpoint_path or 'lfq_256' in vq_checkpoint_path:
+            codebook_size = 256
+        elif 'vq_512' in vq_checkpoint_path or 'fsq_512' in vq_checkpoint_path or 'lfq_512' in vq_checkpoint_path:
+            codebook_size = 512
+        elif 'vq_1024' in vq_checkpoint_path or 'fsq_1024' in vq_checkpoint_path or 'lfq_1024' in vq_checkpoint_path:
+            codebook_size = 1024
+        
+        print(f"Creating {quantizer_type} quantizer with codebook_size={codebook_size}, bottleneck_dim={bottleneck_dim}")
+        
+        # Create the appropriate quantizer
+        if quantizer_type == 'vq':
+            quantizer = VQWithProjection(
+                input_dim=backbone.feature_dim,
+                codebook_size=codebook_size,
+                bottleneck_dim=bottleneck_dim,
+                decay=quantizer_config.get('decay', 0.99),
+                commitment_weight=quantizer_config.get('commitment_weight', 0.25)
+            )
+        elif quantizer_type == 'fsq':
+            quantizer = FSQWithProjection(
+                input_dim=backbone.feature_dim,
+                levels=quantizer_config.get('levels', [8, 5, 5, 5]),
+                bottleneck_dim=bottleneck_dim
+            )
+        elif quantizer_type == 'lfq':
+            quantizer = LFQWithProjection(
+                input_dim=backbone.feature_dim,
+                codebook_size=codebook_size,
+                bottleneck_dim=bottleneck_dim,
+                entropy_loss_weight=quantizer_config.get('entropy_loss_weight', 0.1),
+                diversity_gamma=quantizer_config.get('diversity_gamma', 0.1),
+                spherical=quantizer_config.get('spherical', False)
+            )
+        elif quantizer_type == 'rvq':
+            quantizer = ResidualVQWithProjection(
+                input_dim=backbone.feature_dim,
+                codebook_size=codebook_size,
+                bottleneck_dim=bottleneck_dim,
+                num_quantizers=quantizer_config.get('num_quantizers', 4)
+            )
+        else:
+            raise ValueError(f"Unknown quantizer type: {quantizer_type}")
         
         # Create model with backbone and quantizer
         vq_model = VQSqueezeModule(
