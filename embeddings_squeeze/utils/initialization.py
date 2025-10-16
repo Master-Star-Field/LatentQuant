@@ -67,6 +67,8 @@ def initialize_codebook_from_data(
     all_features = all_features.numpy()
     
     print(f"Running k-means on {all_features.shape[0]} features (dim={all_features.shape[1]})...")
+    print(f"Target codebook_size: {vq_model.codebook_size}")
+    
     kmeans = MiniBatchKMeans(
         n_clusters=vq_model.codebook_size,
         random_state=0,
@@ -76,12 +78,29 @@ def initialize_codebook_from_data(
     )
     kmeans.fit(all_features)
     
+    # Get cluster centers and convert to tensor
+    cluster_centers = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32).to(device)
+    print(f"K-means cluster centers shape: {cluster_centers.shape}")
+    
     # Update codebook with cluster centers
-    # Access the underlying VectorQuantize codebook
-    vq_model.vq._codebook.embed.data = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32).to(device)
+    # The VectorQuantize library may use different internal structures
+    # Try to detect the right way to access the codebook
+    print(f"VQ codebook embed shape before init: {vq_model.vq._codebook.embed.shape}")
+    
+    # VectorQuantize uses shape [num_codebooks, codebook_size, dim]
+    # For single codebook: [1, codebook_size, dim]
+    if vq_model.vq._codebook.embed.ndim == 3:
+        # 3D tensor for multi-codebook support
+        vq_model.vq._codebook.embed.data[0] = cluster_centers
+    else:
+        # 2D tensor for single codebook
+        vq_model.vq._codebook.embed.data = cluster_centers
     
     print(f"Codebook initialized:")
     print(f"  Shape: {vq_model.vq._codebook.embed.shape}")
     print(f"  Mean: {vq_model.vq._codebook.embed.mean():.4f}")
     print(f"  Std: {vq_model.vq._codebook.embed.std():.4f}")
-    print(f"  Norm: {vq_model.vq._codebook.embed.norm(dim=1).mean():.4f}")
+    if vq_model.vq._codebook.embed.ndim == 3:
+        print(f"  Norm: {vq_model.vq._codebook.embed[0].norm(dim=1).mean():.4f}")
+    else:
+        print(f"  Norm: {vq_model.vq._codebook.embed.norm(dim=1).mean():.4f}")
