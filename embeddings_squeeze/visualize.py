@@ -117,8 +117,12 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
             loss_type=checkpoint.get('hyper_parameters', {}).get('loss_type', 'ce')
         )
         
-        # Load state dict
-        vq_model.load_state_dict(checkpoint['state_dict'])
+        # Load state dict (ignore missing keys)
+        missing_keys, unexpected_keys = vq_model.load_state_dict(checkpoint['state_dict'], strict=False)
+        if missing_keys:
+            print(f"Warning: Missing keys in VQ model: {missing_keys}")
+        if unexpected_keys:
+            print(f"Warning: Unexpected keys in VQ model: {unexpected_keys}")
         vq_model.to(device)
         vq_model.eval()
     except Exception as e:
@@ -140,8 +144,12 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
             loss_type=checkpoint.get('hyper_parameters', {}).get('loss_type', 'ce')
         )
         
-        # Load state dict
-        baseline_model.load_state_dict(checkpoint['state_dict'])
+        # Load state dict (ignore missing keys)
+        missing_keys, unexpected_keys = baseline_model.load_state_dict(checkpoint['state_dict'], strict=False)
+        if missing_keys:
+            print(f"Warning: Missing keys in baseline model: {missing_keys}")
+        if unexpected_keys:
+            print(f"Warning: Unexpected keys in baseline model: {unexpected_keys}")
         baseline_model.to(device)
         baseline_model.eval()
     except Exception as e:
