@@ -28,6 +28,7 @@ class BaseQuantizer(nn.Module):
         Returns:
             quantized: Quantized features [B, C, H, W]
             loss: Quantization loss (scalar)
+            indices_flat: Flattened indices [B*H*W] for perplexity calculation
         """
         B, C, H, W = features.shape
         # Transform [B, C, H, W] -> [B, H*W, C]
@@ -39,11 +40,14 @@ class BaseQuantizer(nn.Module):
         # Transform back [B, H*W, C] -> [B, C, H, W]
         quantized = quantized.reshape(B, H, W, C).permute(0, 3, 1, 2)
         
+        # Flatten indices for perplexity calculation: [B, H*W] -> [B*H*W]
+        indices_flat = indices.reshape(-1) if indices is not None else None
+        
         # Handle loss (may be tensor with multiple elements)
         if isinstance(loss, torch.Tensor) and loss.numel() > 1:
             loss = loss.mean()
         
-        return quantized, loss
+        return quantized, loss, indices_flat
 
 
 class VQWithProjection(BaseQuantizer):

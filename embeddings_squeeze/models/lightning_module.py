@@ -91,6 +91,10 @@ class VQSqueezeModule(pl.LightningModule):
         # UMAP visualization storage
         self._val_backbone_embeddings = []
         self._val_quantized_embeddings = []
+        
+        # Perplexity tracking
+        self._train_indices = []
+        self._val_indices = []
     
     def _setup_backbone_freezing(self, unfreeze_last_layer: bool):
         """Setup backbone freezing with optional last layer unfreezing."""
@@ -156,6 +160,7 @@ class VQSqueezeModule(pl.LightningModule):
             quant_loss: Quantization loss (0 if no quantizer)
             original_features: Extracted features (before quantization)
             quantized_features: Features after quantization (same as original if no quantizer)
+            indices: Quantization indices for perplexity calculation (None if no quantizer)
         """
         # Extract features (detach only if backbone is fully frozen)
         features = self.backbone.extract_features(images, detach=False)
@@ -166,15 +171,16 @@ class VQSqueezeModule(pl.LightningModule):
         # Quantize if quantizer is present
         quant_loss = torch.tensor(0.0, device=images.device)
         quantized_features = original_features  # Default to original if no quantizer
+        indices = None
         if self.quantizer is not None:
-            features, quant_loss = self.quantizer.quantize_spatial(features)
+            features, quant_loss, indices = self.quantizer.quantize_spatial(features)
             quantized_features = features
         
         # Decode to segmentation logits
         output = self.backbone.classifier(features)
         output = F.interpolate(output, size=images.shape[-2:], mode='bilinear', align_corners=False)
         
-        return output, quant_loss, original_features, quantized_features
+        return output, quant_loss, original_features, quantized_features, indices
     
     def _compute_loss(self, pred: torch.Tensor, target: torch.Tensor, quant_loss: torch.Tensor):
         """Compute total loss including segmentation and quantization losses."""
@@ -209,7 +215,11 @@ class VQSqueezeModule(pl.LightningModule):
         masks = masks.long()
         
         # Forward pass
-        output, quant_loss, _, _ = self(images)
+        output, quant_loss, _, _, indices = self(images)
+        
+        # Store indices for perplexity calculation
+        if indices is not None:
+            self._train_indices.append(indices.detach().cpu())
         
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
@@ -243,7 +253,11 @@ class VQSqueezeModule(pl.LightningModule):
         masks = masks.long()
         
         # Forward pass
-        output, quant_loss, backbone_features, quantized_features = self(images)
+        output, quant_loss, backbone_features, quantized_features, indices = self(images)
+        
+        # Store indices for perplexity calculation
+        if indices is not None:
+            self._val_indices.append(indices.detach().cpu())
         
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
@@ -273,6 +287,12 @@ class VQSqueezeModule(pl.LightningModule):
         
         return loss
     
+    def on_train_epoch_end(self):
+        """Calculate and log perplexity at end of training epoch."""
+        if self.quantizer is not None and len(self._train_indices) > 0:
+            self._calculate_and_log_perplexity('train')
+            self._train_indices.clear()
+    
     def on_validation_epoch_start(self):
         """Clear accumulated embeddings at the start of each validation epoch."""
         self._val_backbone_embeddings.clear()
@@ -280,6 +300,11 @@ class VQSqueezeModule(pl.LightningModule):
     
     def on_validation_epoch_end(self):
         """Called after validation epoch ends - log Plotly visualizations and save embeddings."""
+        # Calculate and log perplexity if quantizer is present
+        if self.quantizer is not None and len(self._val_indices) > 0:
+            self._calculate_and_log_perplexity('val')
+            self._val_indices.clear()
+        
         # Collect epoch stats from trainer callback metrics
         cm = self.trainer.callback_metrics
         
@@ -517,6 +542,52 @@ class VQSqueezeModule(pl.LightningModule):
         except Exception as e:
             if self.clearml_logger:
                 self.clearml_logger.report_text(f"Failed saving epoch embedding: {e}")
+    
+    def _calculate_and_log_perplexity(self, split: str):
+        """Calculate perplexity and norm from accumulated indices."""
+        # Get indices list
+        indices_list = self._train_indices if split == 'train' else self._val_indices
+        if not indices_list:
+            return
+        
+        # Concatenate all indices
+        all_indices = torch.cat(indices_list, dim=0)  # [total_tokens]
+        
+        # Get codebook size
+        if hasattr(self.quantizer, 'vq'):
+            codebook_size = self.quantizer.vq.codebook_size
+        else:
+            # For other quantizer types, might need different logic
+            return
+        
+        # Calculate usage distribution
+        encodings = F.one_hot(all_indices, num_classes=codebook_size).float().mean(dim=0)
+        encodings = encodings / (encodings.sum() + 1e-10)  # Normalize
+        
+        # Calculate perplexity
+        perplexity = torch.exp(-torch.sum(encodings * torch.log(encodings + 1e-10)))
+        
+        # Calculate norm
+        norm = codebook_size / perplexity
+        
+        # Log to metrics
+        self.log(f'{split}/perplexity', perplexity, on_epoch=True)
+        self.log(f'{split}/norm', norm, on_epoch=True)
+        
+        # Log to ClearML if available
+        if self.clearml_logger:
+            self.clearml_logger.report_scalar(
+                title="Codebook Metrics",
+                series=f"{split}_perplexity",
+                value=perplexity.item(),
+                iteration=self.current_epoch
+            )
+            self.clearml_logger.report_scalar(
+                title="Codebook Metrics",
+                series=f"{split}_norm",
+                value=norm.item(),
+                iteration=self.current_epoch
+            )
 
     def configure_optimizers(self):
         """Configure optimizer - only trainable parameters."""

@@ -57,7 +57,7 @@ class ModelConfig:
     feature_dim: int = 768  # Default for ViT, auto-adjusted for DeepLab (2048)
     
     # Fine-tuning configuration
-    unfreeze_last_layer: bool = False  # Unfreeze only the last layer of backbone for fine-tuning
+    unfreeze_last_layer: bool = True  # Unfreeze only the last layer of backbone for fine-tuning
     
     # Loss configuration
     loss_type: str = "ce"  # "ce", "dice", "focal", "combined"
