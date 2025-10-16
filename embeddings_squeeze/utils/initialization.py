@@ -19,7 +19,7 @@ def initialize_codebook_from_data(
     Initialize codebook using k-means clustering on real data.
     
     Args:
-        vq_model: VectorQuantizer model
+        vq_model: VectorQuantizer model (e.g., VQWithProjection)
         backbone: Segmentation backbone
         train_loader: Training data loader
         device: Device to run on
@@ -29,6 +29,7 @@ def initialize_codebook_from_data(
     all_features = []
     
     backbone.eval()
+    vq_model.eval()
     with torch.no_grad():
         i = 0
         for images, _ in train_loader:
@@ -37,7 +38,14 @@ def initialize_codebook_from_data(
             i += 1
             
             B, C, H, W = features.shape
-            feat_flat = features.permute(0, 2, 3, 1).reshape(-1, C)
+            # Transform to sequence format [B, H*W, C]
+            feat_seq = features.permute(0, 2, 3, 1).reshape(B, H * W, C)
+            
+            # Project features through the projection layer to get bottleneck dims
+            feat_proj = vq_model.project_in(feat_seq)  # [B, H*W, bottleneck_dim]
+            
+            # Flatten for k-means
+            feat_flat = feat_proj.reshape(-1, feat_proj.shape[-1])
             all_features.append(feat_flat.cpu())
             
             if len(all_features) * feat_flat.shape[0] > max_samples:
@@ -45,7 +53,7 @@ def initialize_codebook_from_data(
     
     all_features = torch.cat(all_features).numpy()
     
-    print(f"Running k-means on {all_features.shape[0]} features...")
+    print(f"Running k-means on {all_features.shape[0]} features (dim={all_features.shape[1]})...")
     kmeans = MiniBatchKMeans(
         n_clusters=vq_model.codebook_size,
         random_state=0,
