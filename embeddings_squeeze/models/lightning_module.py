@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 from typing import Dict, Any, Optional
 from torchmetrics import JaccardIndex, Accuracy, Precision, Recall, F1Score
 
@@ -418,6 +419,11 @@ class VQSqueezeModule(pl.LightningModule):
                     backbone_emb_np = backbone_emb_flat.numpy()
                     quantized_emb_np = quantized_emb_flat.numpy()
                     
+                    # Standardize embeddings
+                    scaler = StandardScaler()
+                    backbone_emb_np = scaler.fit_transform(backbone_emb_np)
+                    quantized_emb_np = scaler.fit_transform(quantized_emb_np)
+
                     # Limit samples for performance (take subset if too large)
                     max_samples = 10000
                     if len(backbone_emb_np) > max_samples:
@@ -426,8 +432,16 @@ class VQSqueezeModule(pl.LightningModule):
                         quantized_emb_np = quantized_emb_np[indices]
                     
                     # Generate 2D UMAP projections
-                    proj_2d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(backbone_emb_np)
-                    proj_2d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(quantized_emb_np)
+                    proj_2d_backbone = umap_module.UMAP(
+                        n_neighbors=min(30, len(backbone_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean'
+                    ).fit_transform(backbone_emb_np)
+                    proj_2d_quantized = umap_module.UMAP(
+                        n_neighbors=min(30, len(quantized_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean'
+                    ).fit_transform(quantized_emb_np)
                     
                     # Create 2D Plotly figure with subplots
                     fig_2d = make_subplots(
