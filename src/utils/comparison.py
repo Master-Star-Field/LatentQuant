@@ -80,8 +80,10 @@ def evaluate_model(model, dataloader, device, num_classes: int = 21) -> List[Tup
             if hasattr(model, 'predict'):
                 predictions = model.predict(images)
             else:
-                # For VQ model
-                predictions = model.predict_with_vq(images)
+                # For VQ model - use forward pass and get argmax
+                with torch.no_grad():
+                    output, _, _, _, _ = model(images)
+                    predictions = output.argmax(dim=1)
             
             # Process each sample in batch
             for i in range(images.shape[0]):
@@ -107,18 +109,21 @@ def find_best_worst_samples(results: List[Tuple[int, float, torch.Tensor, torch.
     Args:
         results: List of (sample_idx, iou, image, mask, prediction) tuples
         n_best: Number of best samples to return
-        n_worst: Number of worst samples to return
+        n_worst: Number of worst samples to return (will get n_worst+2 and remove last 2)
         
     Returns:
         best_samples: List of best sample tuples
-        worst_samples: List of worst sample tuples
+        worst_samples: List of worst sample tuples (excluding the 2 worst which may have wrong ground truth)
     """
     # Sort by IoU (descending)
     sorted_results = sorted(results, key=lambda x: x[1], reverse=True)
     
-    # Get best and worst
+    # Get best samples
     best_samples = sorted_results[:n_best]
-    worst_samples = sorted_results[-n_worst:]
+    
+    # Get worst samples: take n_worst+2 and remove the last 2 (likely wrong ground truth)
+    worst_candidates = sorted_results[-(n_worst+2):]
+    worst_samples = worst_candidates[:-2]  # Remove the last 2 samples
     
     return best_samples, worst_samples
 
@@ -185,7 +190,7 @@ def denormalize_image(image: torch.Tensor, mean: Tuple[float, float, float] = (0
 
 def create_segmentation_colormap(num_classes: int = 21) -> ListedColormap:
     """
-    Create a colormap for segmentation visualization.
+    Create a colormap for segmentation visualization with high contrast colors.
     
     Args:
         num_classes: Number of classes
@@ -193,9 +198,40 @@ def create_segmentation_colormap(num_classes: int = 21) -> ListedColormap:
     Returns:
         colormap: Matplotlib colormap
     """
-    # Generate distinct colors
-    colors = sns.color_palette("husl", num_classes)
-    colors = [(0, 0, 0)] + colors  # Add black for background
+    # Define high contrast colors manually for better visibility
+    high_contrast_colors = [
+        (0, 0, 0),           # Black (background)
+        (1, 0, 0),           # Red
+        (0, 1, 0),           # Green  
+        (0, 0, 1),           # Blue
+        (1, 1, 0),           # Yellow
+        (1, 0, 1),           # Magenta
+        (0, 1, 1),           # Cyan
+        (1, 0.5, 0),         # Orange
+        (0.5, 0, 1),         # Purple
+        (0, 0.5, 0),         # Dark Green
+        (0.5, 0.5, 0),       # Olive
+        (0.5, 0, 0),         # Dark Red
+        (0, 0, 0.5),         # Dark Blue
+        (1, 0.5, 0.5),       # Light Red
+        (0.5, 1, 0.5),       # Light Green
+        (0.5, 0.5, 1),       # Light Blue
+        (1, 1, 0.5),         # Light Yellow
+        (1, 0.5, 1),         # Light Magenta
+        (0.5, 1, 1),         # Light Cyan
+        (1, 0.75, 0.5),      # Light Orange
+        (0.75, 0.5, 1),      # Light Purple
+    ]
+    
+    # If we need more colors than we have defined, generate additional ones
+    if num_classes > len(high_contrast_colors):
+        import matplotlib.pyplot as plt
+        additional_colors = plt.cm.tab20(np.linspace(0, 1, num_classes - len(high_contrast_colors)))
+        high_contrast_colors.extend(additional_colors.tolist())
+    
+    # Use only the colors we need
+    colors = high_contrast_colors[:num_classes]
+    
     return ListedColormap(colors)
 
 

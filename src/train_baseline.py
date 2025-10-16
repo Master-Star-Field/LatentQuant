@@ -202,20 +202,21 @@ def setup_logging_and_callbacks(config):
     else:
         clearml_task = None
     
+    # Setup ClearML
+    clearml_task = setup_clearml(
+        project_name=config.logger.project_name,
+        task_name=config.logger.task_name
+    )
+    
     # Create ClearML logger wrapper
     clearml_logger = ClearMLLogger(clearml_task) if clearml_task else None
-    
-    # PyTorch Lightning logger (None for ClearML auto-logging, TensorBoard otherwise)
-    if clearml_task:
-        pl_logger = None
-        print("Using ClearML for logging")
-    else:
-        pl_logger = TensorBoardLogger(
-            save_dir=config.output_dir,
-            name=config.experiment_name,
-            version=None
-        )
-        print("Using TensorBoard for logging")
+       
+    # TensorBoard logger for ClearML auto-logging
+    pl_logger = TensorBoardLogger(
+        save_dir=config.output_dir,
+        name=config.experiment_name,
+        version=None
+    )
     
     # Callbacks
     monitor_metric = 'val/loss'  # Unified metric name

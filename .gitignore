@@ -3,7 +3,6 @@ __pycache__/
 .venv/
 venv/
 
-data/
 outputs/
 
 embeddings_squeeze.egg-info/

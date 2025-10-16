@@ -27,13 +27,14 @@ dependencies = [
 ]
 
 [tool.setuptools]
+package-dir = {"embeddings_squeeze" = "src"}
 packages = [
     "embeddings_squeeze",
     "embeddings_squeeze.configs",
     "embeddings_squeeze.data",
+    "embeddings_squeeze.loggers",
     "embeddings_squeeze.models",
     "embeddings_squeeze.models.backbones",
-    "embeddings_squeeze.loggers",
     "embeddings_squeeze.utils",
 ]
 

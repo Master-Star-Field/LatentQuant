@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 from typing import Dict, Any, Optional
 from torchmetrics import JaccardIndex, Accuracy, Precision, Recall, F1Score
 
@@ -22,7 +23,7 @@ class VQSqueezeModule(pl.LightningModule):
     
     Features:
     - Multiple quantizer support (VQ, FSQ, LFQ, RVQ)
-    - Adapter layers for fine-tuning frozen backbones with configurable parameter count
+    - Fine-tuning support with last layer unfreezing option
     - Advanced loss functions (CE, Dice, Focal, Combined)
     - Embedding extraction and saving
     """
@@ -36,9 +37,7 @@ class VQSqueezeModule(pl.LightningModule):
         vq_loss_weight: float = 0.1,
         loss_type: str = 'ce',
         class_weights: Optional[list] = None,
-        add_adapter: bool = False,
-        feature_dim: int = 2048,
-        adapter_target_params: int = 15_000_000,
+        unfreeze_last_layer: bool = False,
         clearml_logger: Optional[Any] = None,
         **kwargs
     ):
@@ -49,13 +48,11 @@ class VQSqueezeModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.vq_loss_weight = vq_loss_weight
         self.loss_type = loss_type
-        self.add_adapter = add_adapter
-        self.feature_dim = feature_dim
-        self.adapter_target_params = adapter_target_params
+        self.unfreeze_last_layer = unfreeze_last_layer
         
-        # Setup backbone with optional adapters
+        # Setup backbone with optional last layer unfreezing
         self.backbone = backbone
-        self._setup_backbone_with_adapters(feature_dim, add_adapter, adapter_target_params)
+        self._setup_backbone_freezing(unfreeze_last_layer)
         
         # Quantizer (optional)
         self.quantizer = quantizer
@@ -95,71 +92,43 @@ class VQSqueezeModule(pl.LightningModule):
         # UMAP visualization storage
         self._val_backbone_embeddings = []
         self._val_quantized_embeddings = []
-    
-    def _setup_backbone_with_adapters(self, feature_dim: int, add_adapter: bool, target_params: int = 15_000_000):
-        """Setup backbone with optional adapter layers."""
-        def calc_adapter_params(in_dim, reduced_dim):
-            """Calculate exact number of parameters for adapter."""
-            # Conv1: in_dim -> reduced_dim, 3x3 kernel
-            conv1_params = in_dim * reduced_dim * 9 + reduced_dim
-            # BatchNorm: reduced_dim
-            bn_params = reduced_dim * 2
-            # Conv2: reduced_dim -> in_dim, 1x1 kernel  
-            conv2_params = reduced_dim * in_dim + in_dim
-            return conv1_params + bn_params + conv2_params
         
-        def find_reduced_dim(target_params, feature_dim):
-            """Find reduced_dim that gives closest to target_params."""
-            # Start with approximation
-            approx_dim = target_params // (feature_dim * 10)
-            
-            # Fine-tune around the approximation
-            best_dim = approx_dim
-            best_diff = abs(calc_adapter_params(feature_dim, approx_dim) - target_params)
-            
-            for test_dim in range(max(64, approx_dim - 100), min(4096, approx_dim + 100)):
-                param_count = calc_adapter_params(feature_dim, test_dim)
-                diff = abs(param_count - target_params)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_dim = test_dim
-            
-            return best_dim
-
-        if add_adapter:
-            # Freeze backbone
+        # Perplexity tracking
+        self._train_indices = []
+        self._val_indices = []
+    
+    def _setup_backbone_freezing(self, unfreeze_last_layer: bool):
+        """Setup backbone freezing with optional last layer unfreezing."""
+        if unfreeze_last_layer:
+            # Freeze entire backbone first
             for param in self.backbone.parameters():
                 param.requires_grad = False
             
-            # Create lightweight adapter with configurable parameter count
-            # Strategy: Use bottleneck architecture with reduced intermediate dimensions
-            # Previous adapter had ~80M parameters, new target is much smaller (default 15M)
-            
-            # Calculate the exact reduced_dim needed
-            reduced_dim = find_reduced_dim(target_params, feature_dim)
-            
-            # Add lightweight bottleneck adapter after feature extraction
-            self.feature_adapter = nn.Sequential(
-                # Down-projection: feature_dim -> reduced_dim
-                nn.Conv2d(feature_dim, reduced_dim, 3, padding=1),
-                nn.BatchNorm2d(reduced_dim),
-                nn.ReLU(inplace=True),
-                # Up-projection: reduced_dim -> feature_dim  
-                nn.Conv2d(reduced_dim, feature_dim, 1)
-            )
-            # Zero initialization for residual connection
-            nn.init.zeros_(self.feature_adapter[3].weight)
-            nn.init.zeros_(self.feature_adapter[3].bias)
-            
-            # Log the actual parameter count for verification
-            total_params = sum(p.numel() for p in self.feature_adapter.parameters())
-            expected_params = calc_adapter_params(feature_dim, reduced_dim)
-            ratio = total_params / target_params
-            print(f"Lightweight adapter created with {total_params:,} parameters "
-                  f"(target: {target_params:,}, expected: {expected_params:,}, ratio: {ratio:.3f}, "
-                  f"reduced_dim={reduced_dim}, feature_dim={feature_dim})")
-        else:
-            self.feature_adapter = None
+            # Unfreeze the last layer based on backbone type
+            # Check if backbone has a 'backbone' attribute (DeepLabV3)
+            if hasattr(self.backbone, 'backbone'):
+                # DeepLabV3 with ResNet backbone
+                if hasattr(self.backbone.backbone, 'layer4'):
+                    # Unfreeze last ResNet layer (layer4)
+                    for param in self.backbone.backbone.layer4.parameters():
+                        param.requires_grad = True
+                    trainable_params = sum(p.numel() for p in self.backbone.backbone.layer4.parameters())
+                    print(f"Unfroze last layer (layer4) with {trainable_params:,} parameters")
+                else:
+                    print("Warning: Could not identify last layer in backbone")
+            # Check if it's a ViT backbone
+            elif hasattr(self.backbone, 'backbone') and hasattr(self.backbone.backbone, 'vit'):
+                # ViT backbone - unfreeze last encoder block
+                if hasattr(self.backbone.backbone.vit.encoder, 'layers'):
+                    last_block = self.backbone.backbone.vit.encoder.layers[-1]
+                    for param in last_block.parameters():
+                        param.requires_grad = True
+                    trainable_params = sum(p.numel() for p in last_block.parameters())
+                    print(f"Unfroze last transformer block with {trainable_params:,} parameters")
+                else:
+                    print("Warning: Could not identify last layer in ViT backbone")
+            else:
+                print("Warning: Unknown backbone type, could not unfreeze last layer")
     
     def _init_loss(self, loss_type: str, class_weights: Optional[list]):
         """Initialize loss function based on type."""
@@ -192,13 +161,10 @@ class VQSqueezeModule(pl.LightningModule):
             quant_loss: Quantization loss (0 if no quantizer)
             original_features: Extracted features (before quantization)
             quantized_features: Features after quantization (same as original if no quantizer)
+            indices: Quantization indices for perplexity calculation (None if no quantizer)
         """
-        # Extract features
-        features = self.backbone.extract_features(images, detach=self.feature_adapter is not None)
-        
-        # Apply adapter if present
-        if self.feature_adapter is not None:
-            features = features + self.feature_adapter(features)
+        # Extract features (detach only if backbone is fully frozen)
+        features = self.backbone.extract_features(images, detach=False)
         
         # Store original features for embedding extraction
         original_features = features
@@ -206,15 +172,16 @@ class VQSqueezeModule(pl.LightningModule):
         # Quantize if quantizer is present
         quant_loss = torch.tensor(0.0, device=images.device)
         quantized_features = original_features  # Default to original if no quantizer
+        indices = None
         if self.quantizer is not None:
-            features, quant_loss = self.quantizer.quantize_spatial(features)
+            features, quant_loss, indices = self.quantizer.quantize_spatial(features)
             quantized_features = features
         
         # Decode to segmentation logits
         output = self.backbone.classifier(features)
         output = F.interpolate(output, size=images.shape[-2:], mode='bilinear', align_corners=False)
         
-        return output, quant_loss, original_features, quantized_features
+        return output, quant_loss, original_features, quantized_features, indices
     
     def _compute_loss(self, pred: torch.Tensor, target: torch.Tensor, quant_loss: torch.Tensor):
         """Compute total loss including segmentation and quantization losses."""
@@ -249,7 +216,11 @@ class VQSqueezeModule(pl.LightningModule):
         masks = masks.long()
         
         # Forward pass
-        output, quant_loss, _, _ = self(images)
+        output, quant_loss, _, _, indices = self(images)
+        
+        # Store indices for perplexity calculation
+        if indices is not None:
+            self._train_indices.append(indices.detach().cpu())
         
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
@@ -264,7 +235,10 @@ class VQSqueezeModule(pl.LightningModule):
         # Log metrics
         self.log('train_step/loss', loss, on_step=True, on_epoch=False, prog_bar=False)
 
-        self.log('train/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        # Log loss separately to avoid scale conflicts
+        self.log('loss/train', loss, on_step=False, on_epoch=True, prog_bar=False)
+        
+        # Log main metrics (without loss) for cleaner visualization
         self.log('train/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/precision', prec, on_step=False, on_epoch=True)
@@ -283,7 +257,11 @@ class VQSqueezeModule(pl.LightningModule):
         masks = masks.long()
         
         # Forward pass
-        output, quant_loss, backbone_features, quantized_features = self(images)
+        output, quant_loss, backbone_features, quantized_features, indices = self(images)
+        
+        # Store indices for perplexity calculation
+        if indices is not None:
+            self._val_indices.append(indices.detach().cpu())
         
         # Compute loss
         loss = self._compute_loss(output, masks, quant_loss)
@@ -296,7 +274,10 @@ class VQSqueezeModule(pl.LightningModule):
         f1 = self.val_f1(output, masks)
         
         # Log metrics
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        # Log loss separately to avoid scale conflicts
+        self.log('loss/val', loss, on_step=False, on_epoch=True, prog_bar=False)
+        
+        # Log main metrics (without loss) for cleaner visualization
         self.log('val/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('val/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log('val/precision', prec, on_step=False, on_epoch=True)
@@ -313,6 +294,12 @@ class VQSqueezeModule(pl.LightningModule):
         
         return loss
     
+    def on_train_epoch_end(self):
+        """Calculate and log perplexity at end of training epoch."""
+        if self.quantizer is not None and len(self._train_indices) > 0:
+            self._calculate_and_log_perplexity('train')
+            self._train_indices.clear()
+    
     def on_validation_epoch_start(self):
         """Clear accumulated embeddings at the start of each validation epoch."""
         self._val_backbone_embeddings.clear()
@@ -320,6 +307,11 @@ class VQSqueezeModule(pl.LightningModule):
     
     def on_validation_epoch_end(self):
         """Called after validation epoch ends - log Plotly visualizations and save embeddings."""
+        # Calculate and log perplexity if quantizer is present
+        if self.quantizer is not None and len(self._val_indices) > 0:
+            self._calculate_and_log_perplexity('val')
+            self._val_indices.clear()
+        
         # Collect epoch stats from trainer callback metrics
         cm = self.trainer.callback_metrics
         
@@ -427,6 +419,11 @@ class VQSqueezeModule(pl.LightningModule):
                     backbone_emb_np = backbone_emb_flat.numpy()
                     quantized_emb_np = quantized_emb_flat.numpy()
                     
+                    # Standardize embeddings
+                    scaler = StandardScaler()
+                    backbone_emb_np = scaler.fit_transform(backbone_emb_np)
+                    quantized_emb_np = scaler.fit_transform(quantized_emb_np)
+
                     # Limit samples for performance (take subset if too large)
                     max_samples = 10000
                     if len(backbone_emb_np) > max_samples:
@@ -435,8 +432,16 @@ class VQSqueezeModule(pl.LightningModule):
                         quantized_emb_np = quantized_emb_np[indices]
                     
                     # Generate 2D UMAP projections
-                    proj_2d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(backbone_emb_np)
-                    proj_2d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine').fit_transform(quantized_emb_np)
+                    proj_2d_backbone = umap_module.UMAP(
+                        n_neighbors=min(30, len(backbone_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean'
+                    ).fit_transform(backbone_emb_np)
+                    proj_2d_quantized = umap_module.UMAP(
+                        n_neighbors=min(30, len(quantized_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean'
+                    ).fit_transform(quantized_emb_np)
                     
                     # Create 2D Plotly figure with subplots
                     fig_2d = make_subplots(
@@ -481,8 +486,18 @@ class VQSqueezeModule(pl.LightningModule):
                         )
                     
                     # Generate 3D UMAP projections
-                    proj_3d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(backbone_emb_np)
-                    proj_3d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(quantized_emb_np)
+                    proj_3d_backbone = umap_module.UMAP(
+                        n_components=3,
+                        n_neighbors=min(30, len(backbone_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean', 
+                    ).fit_transform(backbone_emb_np)
+                    proj_3d_quantized = umap_module.UMAP(
+                        n_components=3,
+                        n_neighbors=min(30, len(quantized_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean', 
+                    ).fit_transform(quantized_emb_np)
                     
                     # Create 3D Plotly figure with subplots
                     fig_3d = make_subplots(
@@ -557,22 +572,48 @@ class VQSqueezeModule(pl.LightningModule):
         except Exception as e:
             if self.clearml_logger:
                 self.clearml_logger.report_text(f"Failed saving epoch embedding: {e}")
+    
+    def _calculate_and_log_perplexity(self, split: str):
+        """Calculate perplexity and norm from accumulated indices."""
+        # Get indices list
+        indices_list = self._train_indices if split == 'train' else self._val_indices
+        if not indices_list:
+            return
+        
+        # Concatenate all indices
+        all_indices = torch.cat(indices_list, dim=0)  # [total_tokens]
+        
+        # Get codebook size
+        if hasattr(self.quantizer, 'vq'):
+            codebook_size = self.quantizer.vq.codebook_size
+        else:
+            # For other quantizer types, might need different logic
+            return
+        
+        # Calculate usage distribution
+        encodings = F.one_hot(all_indices, num_classes=codebook_size).float().mean(dim=0)
+        encodings = encodings / (encodings.sum() + 1e-10)  # Normalize
+        
+        # Calculate perplexity
+        perplexity = torch.exp(-torch.sum(encodings * torch.log(encodings + 1e-10)))
+        
+        # Calculate norm
+        norm = perplexity / codebook_size
+        
+        # Log to separate plots for better visualization
+        self.log(f'perplexity/{split}', perplexity, on_epoch=True)
+        self.log(f'norm/{split}', norm, on_epoch=True)
 
     def configure_optimizers(self):
         """Configure optimizer - only trainable parameters."""
         params = []
         
-        # Add adapter parameters if present
-        if self.feature_adapter is not None:
-            params += list(self.feature_adapter.parameters())
+        # Add backbone parameters that are trainable
+        params += [p for p in self.backbone.parameters() if p.requires_grad]
         
         # Add quantizer parameters if present
         if self.quantizer is not None:
             params += list(self.quantizer.parameters())
-        
-        # Add backbone parameters if not frozen
-        if self.feature_adapter is None:
-            params += [p for p in self.backbone.parameters() if p.requires_grad]
         
         # Remove duplicates
         params = list({id(p): p for p in params}.values())
@@ -583,6 +624,8 @@ class VQSqueezeModule(pl.LightningModule):
         return torch.optim.AdamW(params, lr=self.learning_rate)
     
     def on_train_start(self):
-        """Ensure frozen backbone stays in eval mode."""
-        if self.feature_adapter is not None:
-            self.backbone.eval()
+        """Set backbone to appropriate mode based on freezing state."""
+        if self.unfreeze_last_layer:
+            # Set backbone to train mode so unfrozen last layer can be trained
+            # But frozen parts will still not update due to requires_grad=False
+            self.backbone.train()

@@ -43,6 +43,7 @@ def create_quantizer(config):
     elif qtype == 'fsq':
         return FSQWithProjection(
             input_dim=feature_dim,
+            codebook_size=config.quantizer.codebook_size,
             levels=config.quantizer.levels
         )
     elif qtype == 'lfq':
@@ -175,12 +176,8 @@ def main():
                        choices=["vit", "deeplab"], help="Backbone model")
     parser.add_argument("--num_classes", type=int, default=21,
                        help="Number of classes")
-    parser.add_argument("--add_adapter", action="store_true",
-                       help="Add adapter layers to frozen backbone")
-    parser.add_argument("--adapter_target_params", type=int, default=15_000_000,
-                       help="Target parameter count for lightweight adapter (default: 15M)")
-    parser.add_argument("--feature_dim", type=int, default=None,
-                       help="Feature dimension (auto-detected if not set)")
+    parser.add_argument("--unfreeze_last_layer", action="store_true",
+                       help="Unfreeze only the last layer of backbone for fine-tuning")
     parser.add_argument("--loss_type", type=str, default="ce",
                        choices=["ce", "dice", "focal", "combined"], help="Loss function type")
     
@@ -257,8 +254,8 @@ def main():
     print(f"Quantizer: {config.quantizer.type if config.quantizer.enabled else 'None'}")
     print(f"Loss type: {config.model.loss_type}")
     print(f"Epochs: {config.training.epochs}")
-    if config.model.add_adapter:
-        print(f"Adapter enabled with target params: {config.model.adapter_target_params:,}")
+    if config.model.unfreeze_last_layer:
+        print(f"Fine-tuning enabled: unfreezing last layer")
     
     # Create components
     # IMPORTANT: Create backbone first to auto-detect feature_dim
@@ -280,9 +277,7 @@ def main():
         vq_loss_weight=config.training.vq_loss_weight,
         loss_type=config.model.loss_type,
         class_weights=config.model.class_weights,
-        add_adapter=config.model.add_adapter,
-        feature_dim=config.model.feature_dim,
-        adapter_target_params=config.model.adapter_target_params,
+        unfreeze_last_layer=config.model.unfreeze_last_layer,
         clearml_logger=clearml_logger
     )
 
@@ -291,15 +286,15 @@ def main():
     
     # Initialize codebook if requested (only for VQ-based quantizers)
     # Note: Codebook initialization is currently disabled in this version
-    # if config.initialize_codebook and quantizer is not None:
-    #     print("Initializing codebook with k-means...")
-    #     initialize_codebook_from_data(
-    #         quantizer,
-    #         backbone,
-    #         data_module.train_dataloader(max_batches=config.training.max_batches),
-    #         model.device,
-    #         max_samples=config.max_init_samples
-    #     )
+    if config.initialize_codebook and quantizer is not None:
+        print("Initializing codebook with k-means...")
+        initialize_codebook_from_data(
+            quantizer,
+            backbone,
+            data_module.train_dataloader(max_batches=config.training.max_batches),
+            model.device,
+            max_samples=config.max_init_samples
+        )
 
     # Create trainer
     trainer = pl.Trainer(
