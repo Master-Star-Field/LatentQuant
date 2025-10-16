@@ -48,6 +48,7 @@ setup(
     entry_points={
         "console_scripts": [
             "squeeze=embeddings_squeeze.cli:squeeze",
+            "embd-metrics=embd_space_metrics.cli:main",
         ],
     },
     include_package_data=True,
