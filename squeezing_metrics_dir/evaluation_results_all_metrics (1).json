@@ -1,0 +1,70 @@
+{
+  "metrics_evaluated": [
+    "cka",
+    "pwcca",
+    "geometry",
+    "rsa",
+    "relational",
+    "jaccard_knn"
+  ],
+  "dataset_size": 3680,
+  "batch_size": 8,
+  "models": {
+    "VQ-EMA": {
+      "scores": {
+        "cka": 0.9326105713844299,
+        "pwcca": 0.6625698208808899,
+        "geometry": -0.002540572183613942,
+        "rsa": 0.8774650193607174,
+        "relational": 0.6947282608695652,
+        "jaccard_knn": 0.19301466075447263
+      },
+      "checkpoint_info": {
+        "has_encoder_adapter": true,
+        "has_decoder_adapter": true
+      }
+    },
+    "FSQ": {
+      "scores": {
+        "cka": 0.7887441515922546,
+        "pwcca": 0.0035678744316101074,
+        "geometry": -0.0022847884809427997,
+        "rsa": 0.30209531850548377,
+        "relational": 0.9624728260869565,
+        "jaccard_knn": 0.020400509078536064
+      },
+      "checkpoint_info": {
+        "has_encoder_adapter": true,
+        "has_decoder_adapter": true
+      }
+    },
+    "LFQ": {
+      "scores": {
+        "cka": 0.7570077180862427,
+        "pwcca": 0.01199327502399683,
+        "geometry": -0.0003092969863173695,
+        "rsa": 0.8609990571166231,
+        "relational": 0.925625,
+        "jaccard_knn": 0.04139222336531867
+      },
+      "checkpoint_info": {
+        "has_encoder_adapter": true,
+        "has_decoder_adapter": true
+      }
+    },
+    "ResidualVQ": {
+      "scores": {
+        "cka": 0.9470046758651733,
+        "pwcca": 0.6788161993026733,
+        "geometry": 0.003873039353787387,
+        "rsa": 0.9768278376167979,
+        "relational": 0.5924456521739131,
+        "jaccard_knn": 0.2709367665984051
+      },
+      "checkpoint_info": {
+        "has_encoder_adapter": true,
+        "has_decoder_adapter": true
+      }
+    }
+  }
+}
