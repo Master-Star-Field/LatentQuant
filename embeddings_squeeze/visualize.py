@@ -95,9 +95,22 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
         # Create backbone
         backbone = create_backbone(config)
         
-        # Create model with backbone
+        # Create VQ quantizer based on checkpoint hyperparameters
+        from models.quantizers import VQWithProjection
+        
+        quantizer_config = checkpoint.get('hyper_parameters', {}).get('quantizer', {})
+        quantizer = VQWithProjection(
+            input_dim=backbone.feature_dim,
+            codebook_size=quantizer_config.get('codebook_size', 512),
+            bottleneck_dim=quantizer_config.get('bottleneck_dim', 64),
+            decay=quantizer_config.get('decay', 0.99),
+            commitment_weight=quantizer_config.get('commitment_weight', 0.25)
+        )
+        
+        # Create model with backbone and quantizer
         vq_model = VQSqueezeModule(
             backbone=backbone,
+            quantizer=quantizer,
             num_classes=checkpoint.get('hyper_parameters', {}).get('num_classes', 21),
             learning_rate=checkpoint.get('hyper_parameters', {}).get('learning_rate', 1e-4),
             vq_loss_weight=checkpoint.get('hyper_parameters', {}).get('vq_loss_weight', 0.1),
