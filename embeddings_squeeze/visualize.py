@@ -11,6 +11,10 @@ Examples:
     
     # Compare DeepLab VQ vs DeepLab baseline  
     python visualize.py --vq_checkpoint ./outputs/deeplab_vq_512/version_0/last.ckpt --baseline_checkpoint ./outputs/deeplab_baseline/version_0/last.ckpt --model deeplab
+
+Note: Make sure the checkpoint paths are correct:
+    - --vq_checkpoint should point to a VQ model checkpoint (e.g., vit_vq_256, vit_fsq_512, etc.)
+    - --baseline_checkpoint should point to a baseline model checkpoint (e.g., vit_baseline, deeplab_baseline, etc.)
 """
 
 import argparse
@@ -85,7 +89,14 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
     
     print(f"Loading VQ model from: {vq_checkpoint_path}")
     try:
-        vq_model = VQSqueezeModule.load_from_checkpoint(vq_checkpoint_path)
+        # Create backbone for VQ model
+        backbone = create_backbone(config)
+        
+        # Load VQ model with backbone
+        vq_model = VQSqueezeModule.load_from_checkpoint(
+            vq_checkpoint_path,
+            backbone=backbone
+        )
         vq_model.to(device)
         vq_model.eval()
     except Exception as e:
@@ -93,7 +104,14 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
     
     print(f"Loading baseline model from: {baseline_checkpoint_path}")
     try:
-        baseline_model = BaselineSegmentationModule.load_from_checkpoint(baseline_checkpoint_path)
+        # Create backbone for baseline model
+        backbone = create_backbone(config)
+        
+        # Load baseline model with backbone
+        baseline_model = BaselineSegmentationModule.load_from_checkpoint(
+            baseline_checkpoint_path,
+            backbone=backbone
+        )
         baseline_model.to(device)
         baseline_model.eval()
     except Exception as e:
