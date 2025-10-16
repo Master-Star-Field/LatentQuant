@@ -234,7 +234,10 @@ class VQSqueezeModule(pl.LightningModule):
         # Log metrics
         self.log('train_step/loss', loss, on_step=True, on_epoch=False, prog_bar=False)
 
-        self.log('train/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        # Log loss separately to avoid scale conflicts
+        self.log('loss/train', loss, on_step=False, on_epoch=True, prog_bar=False)
+        
+        # Log main metrics (without loss) for cleaner visualization
         self.log('train/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log('train/precision', prec, on_step=False, on_epoch=True)
@@ -270,7 +273,10 @@ class VQSqueezeModule(pl.LightningModule):
         f1 = self.val_f1(output, masks)
         
         # Log metrics
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        # Log loss separately to avoid scale conflicts
+        self.log('loss/val', loss, on_step=False, on_epoch=True, prog_bar=False)
+        
+        # Log main metrics (without loss) for cleaner visualization
         self.log('val/iou', iou, on_step=False, on_epoch=True, prog_bar=True)
         self.log('val/acc', acc, on_step=False, on_epoch=True, prog_bar=True)
         self.log('val/precision', prec, on_step=False, on_epoch=True)
@@ -568,22 +574,22 @@ class VQSqueezeModule(pl.LightningModule):
         perplexity = torch.exp(-torch.sum(encodings * torch.log(encodings + 1e-10)))
         
         # Calculate norm
-        norm = codebook_size / perplexity
+        norm = perplexity / codebook_size
         
-        # Log to metrics
-        self.log(f'{split}/perplexity', perplexity, on_epoch=True)
-        self.log(f'{split}/norm', norm, on_epoch=True)
+        # Log to separate plots for better visualization
+        self.log(f'perplexity/{split}', perplexity, on_epoch=True)
+        self.log(f'norm/{split}', norm, on_epoch=True)
         
         # Log to ClearML if available
         if self.clearml_logger:
             self.clearml_logger.log_scalar(
-                title="Codebook Metrics",
+                title="Perplexity",
                 series=f"{split}_perplexity",
                 value=perplexity.item(),
                 iteration=self.current_epoch
             )
             self.clearml_logger.log_scalar(
-                title="Codebook Metrics",
+                title="Norm",
                 series=f"{split}_norm",
                 value=norm.item(),
                 iteration=self.current_epoch
