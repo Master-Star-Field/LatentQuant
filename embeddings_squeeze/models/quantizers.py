@@ -86,34 +86,19 @@ class VQWithProjection(BaseQuantizer):
 
 
 class FSQWithProjection(BaseQuantizer):
-    """
-    Finite Scalar Quantization (FSQ)
-    
-    Quantization without codebook - each dimension quantized independently
-    ~10 bits per vector at levels=[8,5,5,5]
-    """
-    def __init__(self, input_dim: int, levels: list = None):
+    def __init__(self, input_dim: int, levels: list = None, bottleneck_dim=256):
         super().__init__(input_dim)
         if levels is None:
-            levels = [8, 5, 5, 5]  # 8*5*5*5 = 1000 codes ≈ 2^10
-        
-        self.num_levels = len(levels)
-        
-        # Projection to quantization space
-        self.project_in = nn.Linear(input_dim, self.num_levels)
-        
-        # FSQ quantization
-        self.fsq = FSQ(levels=levels, dim=self.num_levels)
-        
-        # Projection back
-        self.project_out = nn.Linear(self.num_levels, input_dim)
+            levels = [8, 5, 5, 5]
+
+        self.project_in = nn.Linear(input_dim, bottleneck_dim)
+        self.fsq = FSQ(levels=levels, dim=bottleneck_dim)
+        self.project_out = nn.Linear(bottleneck_dim, input_dim)
 
     def forward(self, x):
         x_proj = self.project_in(x)
         quantized, indices = self.fsq(x_proj)
         x_out = self.project_out(quantized)
-        
-        # FSQ has no explicit loss
         loss = torch.tensor(0.0, device=x.device)
         return x_out, indices, loss
 
@@ -121,46 +106,55 @@ class FSQWithProjection(BaseQuantizer):
 class LFQWithProjection(BaseQuantizer):
     """
     Lookup-Free Quantization (LFQ)
-    
-    Uses entropy loss for code diversity
-    ~9 bits per vector at codebook_size=512
+
+    • Квантайзер без lookup-таблицы, с энтропийным и диверсификационным лоссами.  
+    • Подходит для встраивания в encoder bottleneck.
+    • Кодирует ~log2(codebook_size) бит информации на вектор.
     """
+
     def __init__(
-        self, 
-        input_dim: int, 
+        self,
+        input_dim: int,
+        bottleneck_dim: int = 64,        
         codebook_size: int = 512,
-        entropy_loss_weight: float = 0.1, 
-        diversity_gamma: float = 0.1, 
-        spherical: bool = False
+        entropy_loss_weight: float = 0.1,
+        diversity_gamma: float = 0.1,
+        spherical: bool = False,
     ):
         super().__init__(input_dim)
-        # Quantization dimension = log2(codebook_size)
-        self.quant_dim = int(math.log2(codebook_size))
-        
-        # Projection with normalization
+
         self.project_in = nn.Sequential(
-            nn.Linear(input_dim, self.quant_dim),
-            nn.LayerNorm(self.quant_dim)
+            nn.Linear(input_dim, bottleneck_dim),
+            nn.LayerNorm(bottleneck_dim),
+            nn.GELU(),
         )
-        
-        # LFQ quantization
+
         self.lfq = LFQ(
-            dim=self.quant_dim,
+            dim=bottleneck_dim,
             codebook_size=codebook_size,
             entropy_loss_weight=entropy_loss_weight,
             diversity_gamma=diversity_gamma,
-            spherical=spherical
+            spherical=spherical,
         )
-        
-        # Projection back
-        self.project_out = nn.Linear(self.quant_dim, input_dim)
+
+        self.project_out = nn.Sequential(
+            nn.Linear(bottleneck_dim, input_dim),
+            nn.LayerNorm(input_dim),
+        )
 
     def forward(self, x):
+        """
+        Args:
+            x: Tensor (..., input_dim)
+        Returns:
+            x_out: реконструированный вектор
+            indices: индексы активированных кодов
+            entropy_loss: вспомогательный лосс LFQ
+        """
         x_proj = self.project_in(x)
         quantized, indices, entropy_loss = self.lfq(x_proj)
         x_out = self.project_out(quantized)
         return x_out, indices, entropy_loss
-
 
 class ResidualVQWithProjection(BaseQuantizer):
     """
