@@ -1,6 +1,6 @@
 """Similarity metrics for comparing feature representations."""
 
-from .registry import METRIC_REGISTRY, create_metric
+from .registry import METRIC_REGISTRY, create_metric, list_available_metrics
 from .base import SimilarityMetric
 from .cka import CKAMetric
 from .pwcca import PWCCAMetric
@@ -12,6 +12,7 @@ from .jaccard import JaccardKNNMetric
 __all__ = [
     "METRIC_REGISTRY",
     "create_metric",
+    "list_available_metrics",
     "SimilarityMetric",
     "CKAMetric",
     "PWCCAMetric",

@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as path_effects
 import numpy as np
 
 
@@ -85,10 +86,16 @@ def visualize_results(results, output_path=None, figsize=(12, 6)):
         ax.set_xticklabels(model_names, rotation=45, ha='right')
         ax.grid(axis='y', alpha=0.3)
         
-        # Add value labels on bars
+        # Add value labels on bars (white text with black outline)
         for i, (x, score) in enumerate(zip(x_pos, scores)):
+            # Add white text with black stroke for better visibility
             ax.text(x, score + 0.02*max(scores), f'{score:.3f}', 
-                   ha='center', va='bottom', fontsize=8)
+                   ha='center', va='bottom', fontsize=8,
+                   color='white', weight='bold',
+                   path_effects=[
+                       path_effects.Stroke(linewidth=2, foreground='black'),
+                       path_effects.Normal()
+                   ])
     
     # Hide unused subplots
     for idx in range(n_metrics, len(axes)):
