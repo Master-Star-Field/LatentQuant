@@ -576,13 +576,13 @@ class VQSqueezeModule(pl.LightningModule):
         
         # Log to ClearML if available
         if self.clearml_logger:
-            self.clearml_logger.report_scalar(
+            self.clearml_logger.log_scalar(
                 title="Codebook Metrics",
                 series=f"{split}_perplexity",
                 value=perplexity.item(),
                 iteration=self.current_epoch
             )
-            self.clearml_logger.report_scalar(
+            self.clearml_logger.log_scalar(
                 title="Codebook Metrics",
                 series=f"{split}_norm",
                 value=norm.item(),
