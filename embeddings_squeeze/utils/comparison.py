@@ -187,7 +187,7 @@ def denormalize_image(image: torch.Tensor, mean: Tuple[float, float, float] = (0
 
 def create_segmentation_colormap(num_classes: int = 21) -> ListedColormap:
     """
-    Create a colormap for segmentation visualization.
+    Create a colormap for segmentation visualization with high contrast colors.
     
     Args:
         num_classes: Number of classes
@@ -195,9 +195,40 @@ def create_segmentation_colormap(num_classes: int = 21) -> ListedColormap:
     Returns:
         colormap: Matplotlib colormap
     """
-    # Generate distinct colors
-    colors = sns.color_palette("husl", num_classes)
-    colors = [(0, 0, 0)] + colors  # Add black for background
+    # Define high contrast colors manually for better visibility
+    high_contrast_colors = [
+        (0, 0, 0),           # Black (background)
+        (1, 0, 0),           # Red
+        (0, 1, 0),           # Green  
+        (0, 0, 1),           # Blue
+        (1, 1, 0),           # Yellow
+        (1, 0, 1),           # Magenta
+        (0, 1, 1),           # Cyan
+        (1, 0.5, 0),         # Orange
+        (0.5, 0, 1),         # Purple
+        (0, 0.5, 0),         # Dark Green
+        (0.5, 0.5, 0),       # Olive
+        (0.5, 0, 0),         # Dark Red
+        (0, 0, 0.5),         # Dark Blue
+        (1, 0.5, 0.5),       # Light Red
+        (0.5, 1, 0.5),       # Light Green
+        (0.5, 0.5, 1),       # Light Blue
+        (1, 1, 0.5),         # Light Yellow
+        (1, 0.5, 1),         # Light Magenta
+        (0.5, 1, 1),         # Light Cyan
+        (1, 0.75, 0.5),      # Light Orange
+        (0.75, 0.5, 1),      # Light Purple
+    ]
+    
+    # If we need more colors than we have defined, generate additional ones
+    if num_classes > len(high_contrast_colors):
+        import matplotlib.pyplot as plt
+        additional_colors = plt.cm.tab20(np.linspace(0, 1, num_classes - len(high_contrast_colors)))
+        high_contrast_colors.extend(additional_colors.tolist())
+    
+    # Use only the colors we need
+    colors = high_contrast_colors[:num_classes]
+    
     return ListedColormap(colors)
 
 
