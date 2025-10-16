@@ -486,8 +486,18 @@ class VQSqueezeModule(pl.LightningModule):
                         )
                     
                     # Generate 3D UMAP projections
-                    proj_3d_backbone = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(backbone_emb_np)
-                    proj_3d_quantized = umap_module.UMAP(n_neighbors=3, min_dist=0.1, metric='cosine', n_components=3).fit_transform(quantized_emb_np)
+                    proj_3d_backbone = umap_module.UMAP(
+                        n_components=3,
+                        n_neighbors=min(30, len(backbone_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean', 
+                    ).fit_transform(backbone_emb_np)
+                    proj_3d_quantized = umap_module.UMAP(
+                        n_components=3,
+                        n_neighbors=min(30, len(quantized_emb_np) - 2),
+                        min_dist=0.01,
+                        metric='euclidean', 
+                    ).fit_transform(quantized_emb_np)
                     
                     # Create 3D Plotly figure with subplots
                     fig_3d = make_subplots(
@@ -593,21 +603,6 @@ class VQSqueezeModule(pl.LightningModule):
         # Log to separate plots for better visualization
         self.log(f'perplexity/{split}', perplexity, on_epoch=True)
         self.log(f'norm/{split}', norm, on_epoch=True)
-        
-        # Log to ClearML if available
-        if self.clearml_logger:
-            self.clearml_logger.log_scalar(
-                title="Perplexity",
-                series=f"{split}_perplexity",
-                value=perplexity.item(),
-                iteration=self.current_epoch
-            )
-            self.clearml_logger.log_scalar(
-                title="Norm",
-                series=f"{split}_norm",
-                value=norm.item(),
-                iteration=self.current_epoch
-            )
 
     def configure_optimizers(self):
         """Configure optimizer - only trainable parameters."""
