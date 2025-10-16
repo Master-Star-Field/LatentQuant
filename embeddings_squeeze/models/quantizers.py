@@ -3,6 +3,7 @@ Vector Quantization implementations using vector_quantize_pytorch library.
 Supports: VQ-VAE, FSQ, LFQ, and Residual VQ.
 """
 
+import code
 import torch
 import torch.nn as nn
 import math
@@ -91,10 +92,18 @@ class VQWithProjection(BaseQuantizer):
 
 
 class FSQWithProjection(BaseQuantizer):
-    def __init__(self, input_dim: int, levels: list = None, bottleneck_dim=256):
+    def __init__(self,
+        input_dim: int,
+        levels: list = None,
+        bottleneck_dim=256,
+        codebook_size=512,
+    ):
         super().__init__(input_dim)
         if levels is None:
             levels = [8, 5, 5, 5]
+
+        self.codebook_size = codebook_size
+        self.bottleneck_dim = codebook_size
 
         self.project_in = nn.Linear(input_dim, bottleneck_dim)
         self.fsq = FSQ(levels=levels, dim=bottleneck_dim)
@@ -128,6 +137,9 @@ class LFQWithProjection(BaseQuantizer):
     ):
         super().__init__(input_dim)
 
+        self.codebook_size = codebook_size
+        self.bottleneck_dim = codebook_size
+
         self.project_in = nn.Sequential(
             nn.Linear(input_dim, bottleneck_dim),
             nn.LayerNorm(bottleneck_dim),
@@ -136,7 +148,7 @@ class LFQWithProjection(BaseQuantizer):
 
         self.lfq = LFQ(
             dim=bottleneck_dim,
-            codebook_size=codebook_size,
+            codebook_size=512,
             entropy_loss_weight=entropy_loss_weight,
             diversity_gamma=diversity_gamma,
             spherical=spherical,
@@ -179,6 +191,8 @@ class ResidualVQWithProjection(BaseQuantizer):
     ):
         super().__init__(input_dim)
         self.bottleneck_dim = bottleneck_dim
+        self.num_quantizers = num_quantizers
+        self.codebook_size = codebook_size
         
         # Down projection
         self.project_in = nn.Linear(input_dim, bottleneck_dim)
