@@ -89,8 +89,23 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
     
     print(f"Loading VQ model from: {vq_checkpoint_path}")
     try:
-        # Load VQ model directly from checkpoint (it contains all weights including backbone)
-        vq_model = VQSqueezeModule.load_from_checkpoint(vq_checkpoint_path)
+        # Load checkpoint
+        checkpoint = torch.load(vq_checkpoint_path, map_location=device)
+        
+        # Create backbone
+        backbone = create_backbone(config)
+        
+        # Create model with backbone
+        vq_model = VQSqueezeModule(
+            backbone=backbone,
+            num_classes=checkpoint.get('hyper_parameters', {}).get('num_classes', 21),
+            learning_rate=checkpoint.get('hyper_parameters', {}).get('learning_rate', 1e-4),
+            vq_loss_weight=checkpoint.get('hyper_parameters', {}).get('vq_loss_weight', 0.1),
+            loss_type=checkpoint.get('hyper_parameters', {}).get('loss_type', 'ce')
+        )
+        
+        # Load state dict
+        vq_model.load_state_dict(checkpoint['state_dict'])
         vq_model.to(device)
         vq_model.eval()
     except Exception as e:
@@ -98,8 +113,22 @@ def load_models(vq_checkpoint_path: str, baseline_checkpoint_path: str, config, 
     
     print(f"Loading baseline model from: {baseline_checkpoint_path}")
     try:
-        # Load baseline model directly from checkpoint (it contains all weights including backbone)
-        baseline_model = BaselineSegmentationModule.load_from_checkpoint(baseline_checkpoint_path)
+        # Load checkpoint
+        checkpoint = torch.load(baseline_checkpoint_path, map_location=device)
+        
+        # Create backbone
+        backbone = create_backbone(config)
+        
+        # Create model with backbone
+        baseline_model = BaselineSegmentationModule(
+            backbone=backbone,
+            num_classes=checkpoint.get('hyper_parameters', {}).get('num_classes', 21),
+            learning_rate=checkpoint.get('hyper_parameters', {}).get('learning_rate', 1e-4),
+            loss_type=checkpoint.get('hyper_parameters', {}).get('loss_type', 'ce')
+        )
+        
+        # Load state dict
+        baseline_model.load_state_dict(checkpoint['state_dict'])
         baseline_model.to(device)
         baseline_model.eval()
     except Exception as e:
