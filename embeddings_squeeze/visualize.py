@@ -219,8 +219,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
+    # Create output directory with model-specific subfolder
+    model_name = os.path.basename(args.vq_checkpoint).replace('.ckpt', '').replace('last', '').replace('-', '').strip('_')
+    if not model_name:
+        # Fallback: extract from path
+        model_name = os.path.basename(os.path.dirname(args.vq_checkpoint))
+    
+    output_dir = os.path.join(args.output_dir, model_name)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"Output directory: {output_dir}")
     
     # Load models
     vq_model, baseline_model = load_models(
@@ -258,7 +266,7 @@ def main():
     
     # Create visualizations
     print(f"Creating visualization for {len(best_samples)} best samples...")
-    best_output_path = os.path.join(args.output_dir, f"best_results_{args.dataset_split}.png")
+    best_output_path = os.path.join(output_dir, f"best_results_{args.dataset_split}.png")
     visualize_comparison(
         samples=best_samples,
         title=f"Best VQ Results ({args.dataset_split} split)",
@@ -267,7 +275,7 @@ def main():
     )
     
     print(f"Creating visualization for {len(worst_samples)} worst samples...")
-    worst_output_path = os.path.join(args.output_dir, f"worst_results_{args.dataset_split}.png")
+    worst_output_path = os.path.join(output_dir, f"worst_results_{args.dataset_split}.png")
     visualize_comparison(
         samples=worst_samples,
         title=f"Worst VQ Results ({args.dataset_split} split)",
